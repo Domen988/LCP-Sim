@@ -185,36 +185,47 @@ if st.session_state.get("run_trigger", False):
             if (r_i + (n_cols - 1)) % 2 == 0: cnt_right_even += 1
             else: cnt_right_odd += 1
         
-        # Weight Map (r,c) -> Count
-        weights = {}
-        # 1. Base Corners (Stowed/Even)
-        weights[(0,0)] = 1; weights[(0,2)] = 1; weights[(2,0)] = 1; weights[(2,2)] = 1
-        
-        # 2. Edges
-        # Odd counts go to Odd Kernel Proxies (0,1), (2,1), (1,0), (1,2) -> Tracking
-        # Even counts go to Even Kernel Proxies (Corners) -> Stowed
-        
+        # --- 1. Weights for CHECKERBOARD STOW (Safety=True) ---
+        # Even Edges -> Corners (Stowed/Safe)
+        # Odd Edges -> Edges (Tracking)
+        # Even Int -> Center (Stowed)
+        # Odd Int -> Right Edge (Tracking)
+        w_stow = {}
+        # Base Corners
+        w_stow[(0,0)] = 1; w_stow[(0,2)] = 1; w_stow[(2,0)] = 1; w_stow[(2,2)] = 1
         # Top
-        weights[(0,1)] = cnt_top_odd
-        weights[(0,0)] += cnt_top_even # Add Even Top to TL Corner
-        
+        w_stow[(0,1)] = cnt_top_odd
+        w_stow[(0,0)] += cnt_top_even
         # Bot
-        weights[(2,1)] = cnt_bot_odd
-        weights[(2,0)] += cnt_bot_even # Add Even Bot to BL Corner
-        
+        w_stow[(2,1)] = cnt_bot_odd
+        w_stow[(2,0)] += cnt_bot_even
         # Left
-        weights[(1,0)] = cnt_left_odd 
-        weights[(0,0)] += cnt_left_even # Add Even Left to TL Corner
-        
+        w_stow[(1,0)] = cnt_left_odd 
+        w_stow[(0,0)] += cnt_left_even
         # Right
-        weights[(1,2)] = cnt_right_odd
-        weights[(0,2)] += cnt_right_even # Add Even Right to TR Corner
+        w_stow[(1,2)] = cnt_right_odd
+        w_stow[(0,2)] += cnt_right_even
+        # Interior
+        w_stow[(1,1)] = cnt_int_even
+        w_stow[(1,2)] += cnt_int_odd
         
-        # 3. Interior
-        weights[(1,1)] = cnt_int_even
+        # --- 2. Weights for NORMAL TRACKING (Safety=False) ---
+        # All Edges -> Edge Proxies (Consistent Shadowing)
+        # All Interior -> Center (Consistent Shadowing)
+        w_track = {}
+        # Corners (Still 1 each)
+        w_track[(0,0)] = 1; w_track[(0,2)] = 1; w_track[(2,0)] = 1; w_track[(2,2)] = 1
         
-        # Add Interior Odd to Right Edge (1,2) which is Odd/Tracking
-        weights[(1,2)] += cnt_int_odd
+        # Top Row -> All to (0,1)
+        w_track[(0,1)] = cnt_top_odd + cnt_top_even
+        # Bot Row -> All to (2,1)
+        w_track[(2,1)] = cnt_bot_odd + cnt_bot_even
+        # Left Col -> All to (1,0)
+        w_track[(1,0)] = cnt_left_odd + cnt_left_even
+        # Right Col -> All to (1,2)
+        w_track[(1,2)] = cnt_right_odd + cnt_right_even
+        # Interior -> All to (1,1)
+        w_track[(1,1)] = cnt_int_even + cnt_int_odd
         
         all_days = []
         
@@ -267,8 +278,11 @@ if st.session_state.get("run_trigger", False):
                 step_stow_loss_w = 0.0
                 step_shad_loss_w = 0.0
                 
+                # Select Weights (Stow vs Tracking)
+                weights_used = w_stow if safety else w_track
+                
                 for s in states:
-                    w_count = weights.get(s.index, 0)
+                    w_count = weights_used.get(s.index, 0)
                     if w_count > 0:
                         p_theo_panel = panel_area * dni
                         step_act_w += p_theo_panel * s.power_factor * w_count
@@ -456,7 +470,10 @@ if view_mode == "Simulation Results":
                     yaxis=dict(title="Date"),
                     zaxis=dict(title="Power (kW)"),
                     aspectmode='cube',
-                    camera=dict(projection=dict(type="orthographic"))
+                    camera=dict(
+                        projection=dict(type="orthographic"),
+                        eye=dict(x=-1.5, y=-1.5, z=0.5)
+                    )
                 ),
                 margin=dict(l=0, r=0, b=0, t=20),
                 height=500,
@@ -600,22 +617,36 @@ elif view_mode == "3D Analysis":
                     if is_left: kc = 0 # TL Corner (Even)
                     elif is_right: kc = 2 # TR Corner (Even)
                     else: 
-                        # Top Edge. Match Parity.
-                        kc = 1 if parity == 1 else 0
+                        # Top Edge. Match Parity ONLY if Stow.
+                        # Else use Middle Edge (0,1) for Uniform Shadowing.
+                        if use_checkerboard_proxy:
+                            kc = 1 if parity == 1 else 0
+                        else:
+                            kc = 1
                 elif is_bot:
                     kr = 2
                     if is_left: kc = 0 # BL Corner (Even)
                     elif is_right: kc = 2 # BR Corner (Even)
                     else:
-                        kc = 1 if parity == 1 else 0
+                        # Bot Edge.
+                        if use_checkerboard_proxy:
+                            kc = 1 if parity == 1 else 0
+                        else:
+                            kc = 1
                 elif is_left:
                     kc = 0
                     # Left Edge.
-                    kr = 1 if parity == 1 else 0
+                    if use_checkerboard_proxy:
+                        kr = 1 if parity == 1 else 0
+                    else:
+                        kr = 1
                 elif is_right:
                     kc = 2
                     # Right Edge.
-                    kr = 1 if parity == 1 else 0
+                    if use_checkerboard_proxy:
+                        kr = 1 if parity == 1 else 0
+                    else:
+                        kr = 1
                 else:
                     # Interior
                     # If Checkerboard Stow is Active: Use 1,1 (Even/Stowed) or 1,2 (Odd/Tracking Proxy)

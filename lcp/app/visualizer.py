@@ -280,8 +280,8 @@ class PlantVisualizer:
         if sh_x:
             data.append(go.Mesh3d(
                 x=sh_x, y=sh_y, z=sh_z, i=sh_i, j=sh_j, k=sh_k,
-                color='black', opacity=0.6, flatshading=True,
-                showlegend=False, hoverinfo='skip'
+                color='black', opacity=1.0, # User Request: Solid dark shadows
+                flatshading=True, hoverinfo='skip'
             ))
         
         data.append(go.Scatter3d(
