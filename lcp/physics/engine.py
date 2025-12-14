@@ -25,7 +25,10 @@ class PanelState:
     def normal(self) -> np.ndarray:
         return self.rotation[:, 2]
 
-class Kernel3x3:
+class InfiniteKernel:
+    """
+    3x3 Kernel + Infinite Virtual Neighbors for accurate shadowing.
+    """
     def __init__(self, geo: PanelGeometry, cfg: ScenarioConfig):
         self.geo = geo
         self.cfg = cfg
@@ -43,20 +46,22 @@ class Kernel3x3:
 
     def _get_virtual_neighbors(self, r, c, current_pos, current_rot):
         neighbors = []
-        # Expand kernel to capture long shadows (5x5 concept)
-        # Limit expansion based on kernel boundary (which represents plant boundary)
+        # Expand kernel to capture long shadows
+        # Radius 10 covers ~20 pitches. At tracking angles, this prevents 'missing neighbor' gaps.
+        
+        radius = 10
         
         # r=0 (South Edge) -> dr >= 0
-        # r=1 (Interior) -> dr in -2..2
+        # r=1 (Interior) -> dr in -radius..radius
         # r=2 (North Edge) -> dr <= 0
-        dr_min = 0 if r == 0 else -2
-        dr_max = 0 if r == 2 else 2
+        dr_min = 0 if r == 0 else -radius
+        dr_max = 0 if r == 2 else radius
         
         # c=0 (Left Edge) -> dc >= 0
-        # c=1 (Center) -> dc in -2..2
+        # c=1 (Center) -> dc in -radius..radius
         # c=2 (Right Edge) -> dc <= 0
-        dc_min = 0 if c == 0 else -2
-        dc_max = 0 if c == 2 else 2
+        dc_min = 0 if c == 0 else -radius
+        dc_max = 0 if c == 2 else radius
         
         px = self.cfg.grid_pitch_x
         py = self.cfg.grid_pitch_y

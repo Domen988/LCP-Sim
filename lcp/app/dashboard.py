@@ -17,7 +17,7 @@ import time
 from lcp.core.geometry import PanelGeometry
 from lcp.core.config import ScenarioConfig
 from lcp.simulation import SimulationRunner
-from lcp.physics.engine import PanelState
+from lcp.physics.engine import InfiniteKernel, PanelState
 from lcp.app.visualizer import PlantVisualizer
 
 PLANT_ROTATION = 5.0
@@ -97,13 +97,13 @@ if st.sidebar.button("Run Simulation", type="primary"):
 # ==========================================
 
 @st.cache_resource
-def get_sim_runner_v3():
+def get_sim_runner_infinite():
     # Ensure csv path is correct relative to execution
     r = SimulationRunner("Koster direct normal irradiance_Wh per square meter.csv")
     r.load_data() # Pre-calculate Splines to ensure they are cached with the object
     return r
 
-runner = get_sim_runner_v3()
+runner = get_sim_runner_infinite()
 data_matrix = runner.load_data()
 
 # Initialize Session State
@@ -130,6 +130,10 @@ if st.session_state.get("run_trigger", False):
             tolerance=tolerance,
             total_panels=total_panels
         )
+        
+        # --- SIMULATION STATE ---
+        # Use the cached runner which has the InfiniteKernel
+        runner = get_sim_runner_infinite()
         
         # 2. Update Kernel (3x3 RVE)
         runner.kernel.geo = geo

@@ -7,14 +7,14 @@ from scipy.interpolate import CubicSpline
 from lcp.core.geometry import PanelGeometry
 from lcp.core.config import ScenarioConfig
 from lcp.core.solar import SolarCalculator
-from lcp.physics.engine import Kernel3x3, PanelState
+from lcp.physics.engine import InfiniteKernel
 
 class SimulationRunner:
-    def __init__(self, csv_path: str):
-        self.csv_path = csv_path
+    def __init__(self, weather_path):
+        self.weather_path = weather_path
         self.geo = PanelGeometry()
         self.cfg = ScenarioConfig()
-        self.kernel = Kernel3x3(self.geo, self.cfg)
+        self.kernel = InfiniteKernel(self.geo, self.cfg)
         self.solar = SolarCalculator()
         self.splines = {} # Cache for CubicSplines
         
@@ -23,7 +23,7 @@ class SimulationRunner:
         Loads the Monthly/Hourly matrix and builds Cubic Splines for interpolation.
         Returns the raw DF for debug.
         """
-        df = pd.read_csv(self.csv_path, sep=';')
+        df = pd.read_csv(self.weather_path, sep=';')
         # Clean column names
         df.columns = [c.strip() for c in df.columns]
         

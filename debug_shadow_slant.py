@@ -4,7 +4,7 @@ import pandas as pd
 from datetime import datetime, timedelta
 from lcp.core.geometry import PanelGeometry
 from lcp.core.config import ScenarioConfig
-from lcp.physics.engine import Kernel3x3
+from lcp.physics.engine import InfiniteKernel
 from lcp.physics.shadows import ShadowEngine
 from lcp.simulation import SimulationRunner
 
