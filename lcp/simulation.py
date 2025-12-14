@@ -2,6 +2,7 @@ import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta
 from typing import List, Dict
+from scipy.interpolate import CubicSpline
 
 from lcp.core.geometry import PanelGeometry
 from lcp.core.config import ScenarioConfig
@@ -15,44 +16,64 @@ class SimulationRunner:
         self.cfg = ScenarioConfig()
         self.kernel = Kernel3x3(self.geo, self.cfg)
         self.solar = SolarCalculator()
+        self.splines = {} # Cache for CubicSplines
         
     def load_data(self) -> pd.DataFrame:
         """
-        Loads the Monthly/Hourly matrix and creates a lookup function.
+        Loads the Monthly/Hourly matrix and builds Cubic Splines for interpolation.
         Returns the raw DF for debug.
         """
         df = pd.read_csv(self.csv_path, sep=';')
         # Clean column names
         df.columns = [c.strip() for c in df.columns]
-        # Set index to Hour? "0 - 1"
-        return df
-
-    def get_dni(self, dt: datetime, data: pd.DataFrame) -> float:
-        """
-        Interpolates DNI from the matrix.
-        """
-        # Map Month
+        
+        # Build Splines for each Month
         month_names = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", 
                        "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+        
+        hours = np.arange(24) # 0 to 23
+        
+        for i, m_col in enumerate(month_names):
+            if m_col in df.columns:
+                values = df[m_col].values[:24] # Assume first 24 rows are hours
+                # BC Type 'clamped' forces derivative to 0 at ends (Midnight)
+                # Ensure values allow for correct spline (float)
+                y = values.astype(float)
+                self.splines[i] = CubicSpline(hours, y, bc_type='clamped')
+                
+        return df
+
+    def get_dni(self, dt: datetime, data: pd.DataFrame = None) -> float:
+        """
+        Interpolates DNI using Cubic Spline.
+        """
         m_idx = dt.month - 1
-        col = month_names[m_idx]
         
-        # Map Hour
-        # Matrix rows are "0 - 1" etc. = index 0 to 23.
-        h = dt.hour
-        # Simple lookup for now (Phase 1)
-        # Better: Interpolate between hours.
-        # But data is likely integrated hourly energy? "Wh per sqm".
-        # So for 10:30, use "10-11" value? Or interp?
-        # Let's use the row corresponding to the hour.
-        
-        try:
-            val = data.iloc[h][col]
-            return float(val)
-        except:
-            return 0.0
+        if m_idx in self.splines:
+            # Fractional Hour
+            h = dt.hour + dt.minute / 60.0 + dt.second / 3600.0
+            val = self.splines[m_idx](h)
+            return max(0.0, float(val))
+            
+        # Fallback (Legacy)
+        if data is not None:
+             month_names = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", 
+                       "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+             col = month_names[m_idx]
+             try:
+                return float(data.iloc[dt.hour][col])
+             except:
+                return 0.0
+        return 0.0
 
     def run_year(self) -> pd.DataFrame:
+        """
+        Runs the simulation for a full year (or subset).
+        """
+        # ... (Existing logic, but relying on get_dni which now uses internal splines)
+        # Note: run_year isn't used by the dashboard directly (dashboard has its own loop).
+        pass  # Dashboard implements its own loop loop currently.
+
         """
         Runs the simulation for a full year (or subset).
         """

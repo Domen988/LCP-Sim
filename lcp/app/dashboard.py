@@ -45,6 +45,8 @@ st.markdown("""
 # 2. SIDEBAR CONTROL ROOM
 # ==========================================
 st.sidebar.title("LCP Control Room")
+view_mode = st.sidebar.radio("View", ["Simulation Results", "3D Analysis"], index=1)
+st.sidebar.markdown("---")
 
 # Geometry Config
 with st.sidebar.expander("Geometry Config", expanded=False):
@@ -66,7 +68,15 @@ with st.sidebar.expander("Plant Sizing", expanded=False):
 with st.sidebar.expander("Simulation Settings", expanded=False):
     # Fix: Use date() object for default
     start_date = st.date_input("Start Date", date(2025, 1, 1))
-    sim_days = st.number_input("Duration (Days)", 1, 30, 3) 
+    
+    full_year_sim = st.checkbox("Full Year Simulation (365 Days)", value=False)
+    
+    if full_year_sim:
+        sim_days = 365
+        # Show disabled input for feedback
+        st.number_input("Duration (Days)", value=365, disabled=True, key="sim_days_disp")
+    else:
+        sim_days = st.number_input("Duration (Days)", 1, 3650, 3) 
 
 # Run Button
 if st.sidebar.button("Run Simulation", type="primary"):
@@ -78,11 +88,11 @@ if st.sidebar.button("Run Simulation", type="primary"):
 # ==========================================
 
 @st.cache_resource
-def get_runner():
+def get_sim_runner():
     # Ensure csv path is correct relative to execution
     return SimulationRunner("Koster direct normal irradiance_Wh per square meter.csv")
 
-runner = get_runner()
+runner = get_sim_runner()
 data_matrix = runner.load_data()
 
 # Initialize Session State
@@ -224,7 +234,7 @@ if st.session_state.get("run_trigger", False):
 # ==========================================
 # 4. RESULTS DASHBOARD
 # ==========================================
-tab1, tab2 = st.tabs(["Simulation Results", "3D Analysis"])
+# tab1, tab2 = st.tabs(["Simulation Results", "3D Analysis"]) -> Removed for Sidebar Nav
 
 results = st.session_state.get("simulation_results")
 
@@ -232,8 +242,8 @@ if not results:
     st.info("👈 Please configure Geometry and Click 'Run Simulation'.")
     st.stop()
 
-# --- TAB 1: METRICS ---
-with tab1:
+# --- VIEW 1: METRICS ---
+if view_mode == "Simulation Results":
     # (Existing Logic kept brief for readability)
     cum_theo = sum([d['summary']['theo_kwh'] for d in results])
     cum_act = sum([d['summary']['act_kwh'] for d in results])
@@ -268,17 +278,10 @@ with tab1:
     
     edited_df = st.data_editor(df_table, hide_index=True, use_container_width=True)
 
-# --- TAB 2: 3D ANALYSIS ---
-with tab2:
-    # CSS Hack for spacing
-    st.markdown("""
-        <style>
-        div[data-testid="stVerticalBlock"] > div:has(div.stMarkdown) { gap: 0rem; }
-        .stMarkdown { margin-bottom: -1rem; }
-        </style>
-    """, unsafe_allow_html=True)
+# --- VIEW 2: 3D ANALYSIS ---
+elif view_mode == "3D Analysis":
     
-    st.markdown("---")
+    # 3-Column Layout: [Table (1)] | [Info & Controls (1)] | [Viz & Charts (2)]
     
     # 3-Column Layout: [Table (1)] | [Info & Controls (1)] | [Viz & Charts (2)]
     col_left, col_mid, col_right = st.columns([1, 1, 2])
@@ -307,12 +310,14 @@ with tab2:
         
         # Selection
         current_idx = st.session_state['day_selection_idx']
-        st.caption(f"Select Day (Showing Day {current_idx + 1}):")
+        # Selection
+        current_idx = st.session_state['day_selection_idx']
         
         event = st.dataframe(
             df_3d, 
             use_container_width=True, hide_index=True,
-            on_select="rerun", selection_mode="single-row"
+            on_select="rerun", selection_mode="single-row",
+            height=550
         )
         
         # Update Selection
@@ -365,7 +370,7 @@ with tab2:
         enable_anim = st.checkbox("Smooth Animation", value=False)
         show_rays = st.checkbox("Show Sunrays", value=True)
         show_pivots = st.checkbox("Show Pivots", value=True)
-        show_stow = st.checkbox("Safety Mode", value=True, help="Disable to see collisions")
+        show_stow = st.checkbox("Stow", value=True, help="Uncheck to see collisions (Safety Off)")
 
     # --- RIGHT: VIZ & SLIDER & CHART ---
     with col_right:
@@ -381,13 +386,14 @@ with tab2:
     clash_y = [f['act_w']/1000.0 for f in day_frames_light if f['safety']]
     
     mc = go.Figure()
-    mc.add_trace(go.Scatter(x=x_times, y=y_theo, name="Theo", line=dict(color='gray', dash='dot')))
-    mc.add_trace(go.Scatter(x=x_times, y=y_act, name="Actual", fill='tozeroy', line=dict(color='#1f77b4')))
+    mc.add_trace(go.Scatter(x=x_times, y=y_theo, name="Theo [kW]", line=dict(color='gray', dash='dot')))
+    mc.add_trace(go.Scatter(x=x_times, y=y_act, name="Actual [kW]", fill='tozeroy', line=dict(color='#1f77b4')))
     
     if clash_x:
         mc.add_trace(go.Scatter(x=clash_x, y=clash_y, mode='markers', name="Clash", marker=dict(color='red', size=8, symbol='x')))
     
-    mc.update_layout(height=250, margin=dict(l=0,r=0,t=20,b=20), xaxis=dict(title="Time"), yaxis=dict(title="kW"), showlegend=True, legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
+    # Removed yaxis title to align chart with slider
+    mc.update_layout(height=250, margin=dict(l=0,r=0,t=20,b=20), xaxis=dict(title="Time"), yaxis=dict(title=None), showlegend=True, legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
 
     # --- SHARED INFO HELPER ---
     def get_info_html(frame, day_sum):
