@@ -509,11 +509,14 @@ elif view_mode == "3D Analysis":
             t_val = s['theo_kwh']
             a_val = s['act_kwh']
             stow_val = s['stow_loss_kwh']
+            shad_val = s['shad_loss_kwh']
+            
             rows_3d.append({
                 "Date": s['date'].strftime("%Y-%m-%d"),
-                "Theo": f"{t_val:.1f}",
-                "Act %": f"{(a_val/t_val)*100:.1f}" if t_val > 0 else "0",
-                "Stow %": f"{(stow_val/t_val)*100:.1f}" if t_val > 0 else "0",
+                "Theoretical power": f"{t_val:.1f}",
+                "Plant efficiency": f"{(a_val/t_val)*100:.1f} %" if t_val > 0 else "0 %",
+                "Stow loss %": f"{(stow_val/t_val)*100:.1f} %" if t_val > 0 else "0 %",
+                "Shadowing loss %": f"{(shad_val/t_val)*100:.1f} %" if t_val > 0 else "0 %",
             })
         df_3d = pd.DataFrame(rows_3d)
         
@@ -563,9 +566,9 @@ elif view_mode == "3D Analysis":
     )
     
     scene_cfg = dict(
-        xaxis=dict(visible=True, showgrid=True, title="", showticklabels=False), # Hide E
-        yaxis=dict(visible=True, showgrid=True, title="", showticklabels=False), # Hide N
-        zaxis=dict(visible=True, showgrid=True, title="H"),
+        xaxis=dict(visible=False, showgrid=True, title="", showticklabels=False), # Hide E
+        yaxis=dict(visible=False, showgrid=True, title="", showticklabels=False), # Hide N
+        zaxis=dict(visible=False, showgrid=True, title="H"),
         aspectmode='data',
         camera=dict(projection=dict(type="orthographic"))
     )
