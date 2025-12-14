@@ -221,8 +221,8 @@ class PlantVisualizer:
             if s.shadow_polys:
                 # Calculate offset to glass surface
                 # Pivot Frame -> Geom Center (Pivot Offset) -> Top Surface (Thickness/2)
-                # Ensure we push slightly +0.05 to avoid z-fight with glass
-                shift_vec = s.rotation @ (np.array(self.geo.pivot_offset) + np.array([0, 0, t/2.0 + 0.05]))
+                # Ensure we push slightly +0.005 to avoid z-fight with glass
+                shift_vec = s.rotation @ (np.array(self.geo.pivot_offset) + np.array([0, 0, t/2.0 + 0.005]))
                 
                 for poly in s.shadow_polys:
                     if len(poly) < 3: continue

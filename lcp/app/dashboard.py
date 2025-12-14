@@ -573,7 +573,7 @@ elif view_mode == "3D Analysis":
         
         st.markdown("### Controls")
         enable_anim = st.checkbox("Smooth Animation", value=False)
-        show_rays = st.checkbox("Show Sunrays", value=True)
+        show_rays = st.checkbox("Show Sunrays", value=False)
         show_pivots = st.checkbox("Show Pivots", value=True)
         show_stow = st.checkbox("Stow", value=True, help="Uncheck to see collisions (Safety Off)")
         show_clash_emphasis = st.checkbox("Clash Emphasis", value=True, help="Highlight Stow/Clash in Red/Orange. Disable to see shadows.")
