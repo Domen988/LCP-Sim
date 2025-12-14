@@ -38,6 +38,10 @@ st.markdown("""
         margin-top: 0rem;
         margin-bottom: 0.5rem;
     }
+    /* Hide Streamlit Header */
+    .stApp > header {
+        display: none;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -88,11 +92,13 @@ if st.sidebar.button("Run Simulation", type="primary"):
 # ==========================================
 
 @st.cache_resource
-def get_sim_runner():
+def get_sim_runner_v3():
     # Ensure csv path is correct relative to execution
-    return SimulationRunner("Koster direct normal irradiance_Wh per square meter.csv")
+    r = SimulationRunner("Koster direct normal irradiance_Wh per square meter.csv")
+    r.load_data() # Pre-calculate Splines to ensure they are cached with the object
+    return r
 
-runner = get_sim_runner()
+runner = get_sim_runner_v3()
 data_matrix = runner.load_data()
 
 # Initialize Session State
@@ -376,7 +382,8 @@ elif view_mode == "3D Analysis":
     with col_right:
         ph_viz_cont = st.container() # Top: Viz
         ph_slider = st.empty()       # Mid: Slider
-        ph_chart = st.empty()        # Bot: Chart
+        ph_chart = st.empty()        # Bot: Power Chart
+        ph_sun_chart = st.empty()    # Bot: Sun Chart
         
     # --- SHARED CHART GENERATION ---
     y_act = [f['act_w']/1000.0 for f in day_frames_light]
@@ -385,6 +392,7 @@ elif view_mode == "3D Analysis":
     clash_x = [f['time'].strftime("%H:%M") for f in day_frames_light if f['safety']]
     clash_y = [f['act_w']/1000.0 for f in day_frames_light if f['safety']]
     
+    # 1. POWER CHART
     mc = go.Figure()
     mc.add_trace(go.Scatter(x=x_times, y=y_theo, name="Theo [kW]", line=dict(color='gray', dash='dot')))
     mc.add_trace(go.Scatter(x=x_times, y=y_act, name="Actual [kW]", fill='tozeroy', line=dict(color='#1f77b4')))
@@ -394,6 +402,23 @@ elif view_mode == "3D Analysis":
     
     # Removed yaxis title to align chart with slider
     mc.update_layout(height=250, margin=dict(l=0,r=0,t=20,b=20), xaxis=dict(title="Time"), yaxis=dict(title=None), showlegend=True, legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
+
+    # 2. SUN PROFILE CHART
+    y_az = [f['sun_az'] for f in day_frames_light]
+    y_el = [f['sun_el'] for f in day_frames_light]
+    
+    fig_sun = go.Figure()
+    fig_sun.add_trace(go.Scatter(x=x_times, y=y_az, name="Azimuth [°]", line=dict(color='orange')))
+    fig_sun.add_trace(go.Scatter(x=x_times, y=y_el, name="Elevation [°]", line=dict(color='gold'), yaxis="y2"))
+    
+    fig_sun.update_layout(
+        height=200, margin=dict(l=0,r=0,t=20,b=20),
+        xaxis=dict(title="Time"),
+        yaxis=dict(title="Azimuth", side="left", title_standoff=0),
+        yaxis2=dict(title="Elevation", side="right", overlaying="y", range=[0, 90], title_standoff=0),
+        showlegend=True,
+        legend=dict(orientation="h", y=1.15, x=0.5, xanchor="center")
+    )
 
     # --- SHARED INFO HELPER ---
     def get_info_html(frame, day_sum):
@@ -416,9 +441,11 @@ elif view_mode == "3D Analysis":
         # ANIMATION MODE
         ph_slider.empty() # Hide slider
         
-        # 1. Render Chart (Static)
+        # 1. Render Charts (Static)
         with ph_chart:
             st.plotly_chart(mc, use_container_width=True)
+        with ph_sun_chart:
+            st.plotly_chart(fig_sun, use_container_width=True)
             
         # 2. Render Info (Initial Frame)
         with ph_frame_info:
@@ -535,9 +562,12 @@ elif view_mode == "3D Analysis":
         # 4. Chart (Add marker)
         if sel_time_str:
              mc.add_vline(x=sel_time_str, line=dict(color="black", dash="dot"))
+             fig_sun.add_vline(x=sel_time_str, line=dict(color="black", dash="dot"))
         
         with ph_chart:
             st.plotly_chart(mc, use_container_width=True)
+        with ph_sun_chart:
+            st.plotly_chart(fig_sun, use_container_width=True)
             
         # 5. Info
         with ph_frame_info:
