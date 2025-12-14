@@ -559,8 +559,8 @@ elif view_mode == "3D Analysis":
     )
     
     scene_cfg = dict(
-        xaxis=dict(visible=True, showgrid=True, title="E"),
-        yaxis=dict(visible=True, showgrid=True, title="N"),
+        xaxis=dict(visible=True, showgrid=True, title="", showticklabels=False), # Hide E
+        yaxis=dict(visible=True, showgrid=True, title="", showticklabels=False), # Hide N
         zaxis=dict(visible=True, showgrid=True, title="H"),
         aspectmode='data',
         camera=dict(projection=dict(type="orthographic"))

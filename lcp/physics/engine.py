@@ -41,6 +41,40 @@ class Kernel3x3:
                 x = (c - 1) * cfg.grid_pitch_x
                 self.pivots[(r,c)] = np.array([float(x), float(y), 0.0])
 
+    def _get_virtual_neighbors(self, r, c, current_pos, current_rot):
+        neighbors = []
+        # Expand kernel to capture long shadows (5x5 concept)
+        # Limit expansion based on kernel boundary (which represents plant boundary)
+        
+        # r=0 (South Edge) -> dr >= 0
+        # r=1 (Interior) -> dr in -2..2
+        # r=2 (North Edge) -> dr <= 0
+        dr_min = 0 if r == 0 else -2
+        dr_max = 0 if r == 2 else 2
+        
+        # c=0 (Left Edge) -> dc >= 0
+        # c=1 (Center) -> dc in -2..2
+        # c=2 (Right Edge) -> dc <= 0
+        dc_min = 0 if c == 0 else -2
+        dc_max = 0 if c == 2 else 2
+        
+        px = self.cfg.grid_pitch_x
+        py = self.cfg.grid_pitch_y
+        
+        for dr in range(dr_min, dr_max + 1):
+            for dc in range(dc_min, dc_max + 1):
+                if dr == 0 and dc == 0: continue
+                
+                # Coordinate: Neighbor relative to Current
+                # dx = dc * px
+                # dy = dr * py
+                offset = np.array([float(dc * px), float(dr * py), 0.0])
+                n_pos = current_pos + offset
+                
+                neighbors.append((n_pos, current_rot))
+        
+        return neighbors
+
     def solve_timestep(self, sun_az: float, sun_el: float, enable_safety: bool = True) -> Tuple[List[PanelState], bool]:
         """
         Solves the state of the 3x3 kernel for a given sun position.
@@ -91,21 +125,23 @@ class Kernel3x3:
         
         # 4. Calculate Shadow Loss & Final State (Pass 2)
         states = []
-        all_kinematics = list(panel_kinematics.values())
-        neighbor_data = [(k[0], k[1]) for k in all_kinematics]
         
         for r in range(3):
             for c in range(3):
                 idx = (r,c)
                 pos, rot, mode = panel_kinematics[idx]
                 
+                # Use Virtual Neighbors for infinite plant emulation
+                # Note: 'rot' is uniform (Safety=False) or We assume neighbor rotates same (good approx)
+                v_neighbors = self._get_virtual_neighbors(r, c, pos, rot)
+                
                 # Shadow Loss
-                # User Request: Turn off shadowing during clash/stowing (Checkerboard strategy implies negligible mutual shading or accepted loss)
                 if collision_detected:
                     shad_loss = 0.0
                     shad_polys = []
                 else:
-                    shad_loss, shad_polys = self.shadower.calculate_loss(pos, rot, neighbor_data, sun_vec)
+                    # Pass virtual neighbors instead of finite kernel neighbors
+                    shad_loss, shad_polys = self.shadower.calculate_loss(pos, rot, v_neighbors, sun_vec)
                 
                 # Cosine Loss
                 normal = rot[:, 2]
