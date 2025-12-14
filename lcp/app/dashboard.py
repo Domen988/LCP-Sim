@@ -250,39 +250,142 @@ if not results:
 
 # --- VIEW 1: METRICS ---
 if view_mode == "Simulation Results":
-    # (Existing Logic kept brief for readability)
+    
+    col_left, col_right = st.columns([1, 2])
+    
+    # 1. AGGREGATE STATS
     cum_theo = sum([d['summary']['theo_kwh'] for d in results])
     cum_act = sum([d['summary']['act_kwh'] for d in results])
-    cum_loss = cum_theo - cum_act
+    cum_stow = sum([d['summary']['stow_loss_kwh'] for d in results])
+    cum_shad = sum([d['summary']['shad_loss_kwh'] for d in results])
     
-    pct_loss = (cum_loss / cum_theo * 100) if cum_theo > 0 else 0
-    pct_stow = (sum([d['summary']['stow_loss_kwh'] for d in results]) / cum_theo * 100) if cum_theo > 0 else 0
+    # Derivations
+    total_loss = cum_theo - cum_act
+    # Whatever isn't explained by Stow or Shadow is "Other" (Cosine, Limits)
+    cum_other = total_loss - cum_stow - cum_shad
     
-    m1, m2, m3, m4 = st.columns(4)
-    m1.metric("Cum. Theo Power", f"{cum_theo:,.0f} kWh")
-    m2.metric("Total Loss", f"{pct_loss:.2f}%", delta_color="inverse")
-    m3.metric("Stow Loss", f"{pct_stow:.2f}%", delta_color="inverse")
+    eff_pct = (cum_act / cum_theo * 100) if cum_theo > 0 else 0
+    stow_pct = (cum_stow / cum_theo * 100) if cum_theo > 0 else 0
+    shad_pct = (cum_shad / cum_theo * 100) if cum_theo > 0 else 0
+    other_pct = (cum_other / cum_theo * 100) if cum_theo > 0 else 0
     
-    st.divider()
-    
-    # Table Logic
-    rows = []
-    for res in results:
-        s = res['summary']
-        t = s['theo_kwh']
-        a = s['act_kwh']
-        rows.append({
-            "Date": s['date'].strftime("%Y-%m-%d"),
-            "Theo [kWh]": f"{t:.1f}",
-            "Act [%]": f"{(a/t)*100:.1f}" if t > 0 else "0",
-            "Stow Loss [%]": f"{(s['stow_loss_kwh']/t)*100:.1f}" if t > 0 else "0",
-            "Select": False
-        })
-    
-    df_table = pd.DataFrame(rows)
-    df_table = df_table[["Select", "Date", "Theo [kWh]", "Act [%]", "Stow Loss [%]"]]
-    
-    edited_df = st.data_editor(df_table, hide_index=True, use_container_width=True)
+    # --- LEFT COLUMN: STATS & TABLE ---
+    # --- LEFT COLUMN: STATS & TABLE ---
+    with col_left:
+        st.subheader("Performance Summary")
+        
+        summ_html = f"""
+<div style="font-size:0.95em; line-height:1.6; border:1px solid rgba(250,250,250,0.2); padding:15px; border-radius:8px; margin-bottom:20px;">
+    <div style="display:grid; grid-template-columns: 1.5fr 1fr; row-gap:8px;">
+        <div style="color:#aaa;">Total Theoretical</div> <div style="font-weight:bold; text-align:right;">{cum_theo/1000:,.2f} MWh</div>
+        <div style="color:#aaa;">Total Actual</div>      <div style="font-weight:bold; text-align:right;">{cum_act/1000:,.2f} MWh</div>
+        <div style="border-bottom:1px solid rgba(250,250,250,0.2); grid-column:1/-1; margin:4px 0;"></div>
+        <div style="color:#aaa;">Efficiency</div>        <div style="font-weight:bold; text-align:right; color:#4CAF50;">{eff_pct:.1f}%</div>
+        <div style="color:#aaa;">Stow Loss</div>         <div style="font-weight:bold; text-align:right; color:#FF5252;">{stow_pct:.1f}%</div>
+        <div style="color:#aaa;">Shadow Loss</div>       <div style="font-weight:bold; text-align:right; color:#FFC107;">{shad_pct:.2f}%</div>
+        <div style="color:#aaa;">Other / Cosine</div>    <div style="font-weight:bold; text-align:right; color:#9E9E9E;">{other_pct:.2f}%</div>
+    </div>
+</div>
+"""
+        st.markdown(summ_html, unsafe_allow_html=True)
+        
+        st.subheader("Daily Data")
+        rows = []
+        for res in results:
+            s = res['summary']
+            t = s['theo_kwh']
+            a = s['act_kwh']
+            rows.append({
+                "Date": s['date'].strftime("%Y-%m-%d"),
+                "Theo [kWh]": f"{t:.1f}",
+                "Act [%]": f"{(a/t)*100:.1f}" if t > 0 else "0",
+                "Stow [%]": f"{(s['stow_loss_kwh']/t)*100:.1f}" if t > 0 else "0"
+            })
+        
+        df_table = pd.DataFrame(rows)
+        # Display Table
+        st.dataframe(df_table, use_container_width=True, hide_index=True, height=500)
+
+    # --- RIGHT COLUMN: SURFACE PLOT ---
+    with col_right:
+        st.subheader("Annual Power Landscape")
+        
+        # Prepare Data Matrix (X=Time, Y=Day, Z=Power)
+        # Filter 05:00 - 20:00
+        z_data = []
+        y_dates = []
+        x_times = None 
+        
+        for day in results:
+            # Filter frames for 05:00 to 20:00 (Inclusive of hour 20)
+            valid_frames = [f for f in day['frames'] if 5 <= f['time'].hour <= 20]
+            
+            # Extract Power
+            row = [f['act_w']/1000.0 for f in valid_frames]
+            z_data.append(row)
+            y_dates.append(day['summary']['date'].strftime("%Y-%m-%d"))
+            
+            if x_times is None and valid_frames:
+                x_times = [f['time'].strftime("%H:%M") for f in valid_frames]
+        
+        if z_data and x_times:
+            fig_surf = go.Figure()
+            
+            # 1. Surface (Actual)
+            fig_surf.add_trace(go.Surface(
+                z=z_data, x=x_times, y=y_dates,
+                colorscale='Viridis', 
+                colorbar=dict(title="Power (kW)", len=0.6, y=0.5)
+            ))
+            
+            # 2. Theoretical Lines (Wireframe)
+            # Create a single trace with disjoint lines (separated by None)
+            wf_x, wf_y, wf_z = [], [], []
+            
+            for day in results:
+                valid_frames = [f for f in day['frames'] if 5 <= f['time'].hour <= 20]
+                if valid_frames:
+                    # X: Times
+                    ts = [f['time'].strftime("%H:%M") for f in valid_frames]
+                    # Y: Date (Repeated)
+                    d_str = day['summary']['date'].strftime("%Y-%m-%d")
+                    ds = [d_str] * len(ts)
+                    # Z: Theo
+                    vs = [f['theo_w']/1000.0 for f in valid_frames]
+                    
+                    wf_x.extend(ts)
+                    wf_y.extend(ds)
+                    wf_z.extend(vs)
+                    
+                    # Add Break (None) to separate lines
+                    wf_x.append(None)
+                    wf_y.append(None)
+                    wf_z.append(None)
+
+            if wf_x:
+                fig_surf.add_trace(go.Scatter3d(
+                    x=wf_x, y=wf_y, z=wf_z,
+                    mode='lines', name='Theoretical',
+                    line=dict(color='black', width=3, dash='dot'),
+                    connectgaps=False
+                ))
+            
+            fig_surf.update_layout(
+                scene=dict(
+                    xaxis=dict(title="Time (Morning → Evening)"),
+                    yaxis=dict(title="Date"),
+                    zaxis=dict(title="Power (kW)"),
+                    aspectmode='manual', 
+                    aspectratio=dict(x=1.0, y=1.0, z=1.0),
+                    camera=dict(eye=dict(x=-1.5, y=-1.5, z=0.5))
+                ),
+                margin=dict(l=0, r=0, b=0, t=10), # No Title
+                height=600, 
+                legend=dict(x=0, y=1)
+            )
+            st.plotly_chart(fig_surf, use_container_width=True)
+        else:
+            st.warning("Insufficient data to generate Surface Plot.")
 
 # --- VIEW 2: 3D ANALYSIS ---
 elif view_mode == "3D Analysis":
