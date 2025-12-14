@@ -4,6 +4,8 @@ from typing import List, Tuple
 from lcp.core.geometry import PanelGeometry
 from lcp.physics.engine import PanelState
 
+from lcp.app.theme import Theme
+
 class PlantVisualizer:
     def __init__(self, geometry: PanelGeometry):
         self.geo = geometry
@@ -104,13 +106,13 @@ class PlantVisualizer:
         data.append(go.Scatter3d(
             x=[0, ax], y=[0, ay], z=[0.1, 0.1],
             mode='lines+text', text=["", "N"], textposition="top center",
-            line=dict(color='red', width=5), showlegend=False, hoverinfo='skip'
+            line=dict(color=Theme.NORTH_ARROW, width=5), showlegend=False, hoverinfo='skip'
         ))
         data.append(go.Cone(
             x=[ax], y=[ay], z=[0.1],
             u=[np.sin(theta)], v=[np.cos(theta)], w=[0],
             sizemode="absolute", sizeref=0.5, anchor="tail",
-            colorscale=[[0, 'red'], [1, 'red']], showscale=False, hoverinfo='skip'
+            colorscale=[[0, Theme.NORTH_ARROW], [1, Theme.NORTH_ARROW]], showscale=False, hoverinfo='skip'
         ))
         
         return data
@@ -165,13 +167,13 @@ class PlantVisualizer:
         
         # --- LOOP STATES ---
         for s_idx, s in enumerate(states):
-            # 1. Colors
-            c_glass = '#1f77b4' # Blue
+            # 1. Colors (From Theme)
+            c_glass = Theme.PANEL_GLASS
             if show_clash_emphasis:
-                if s.mode == "STOW": c_glass = 'red' 
-                if s.collision and s.mode == "TRACKING": c_glass = 'orange'
-            # Removed gray logic for shadows
-            c_side = 'darkgray'
+                if s.mode == "STOW": c_glass = Theme.ERROR
+                if s.collision and s.mode == "TRACKING": c_glass = Theme.WARNING
+            
+            c_side = Theme.PANEL_FRAME
             
             # 2. Panel Geometry
             dx, dy, dz = w/2.0, l/2.0, t/2.0
@@ -280,7 +282,7 @@ class PlantVisualizer:
         if sh_x:
             data.append(go.Mesh3d(
                 x=sh_x, y=sh_y, z=sh_z, i=sh_i, j=sh_j, k=sh_k,
-                color='black', opacity=1.0, # User Request: Solid dark shadows
+                color=Theme.SHADOW, opacity=1.0, # User Request: Solid dark shadows
                 flatshading=True, hoverinfo='skip'
             ))
         
@@ -292,7 +294,7 @@ class PlantVisualizer:
         if show_pivots and pv_x:
             data.append(go.Mesh3d(
                 x=pv_x, y=pv_y, z=pv_z, i=pv_i, j=pv_j, k=pv_k,
-                color='teal', opacity=1.0, flatshading=True,
+                color=Theme.PIVOT, opacity=1.0, flatshading=True,
                 showlegend=False, hoverinfo='skip'
             ))
             

@@ -19,6 +19,7 @@ from lcp.core.config import ScenarioConfig
 from lcp.simulation import SimulationRunner
 from lcp.physics.engine import InfiniteKernel, PanelState
 from lcp.app.visualizer import PlantVisualizer
+from lcp.app.theme import Theme
 
 PLANT_ROTATION = 5.0
 
@@ -373,13 +374,13 @@ if view_mode == "Simulation Results":
         summ_html = f"""
 <div style="font-size:0.95em; line-height:1.6; border:1px solid rgba(250,250,250,0.2); padding:15px; border-radius:8px; margin-bottom:20px;">
     <div style="display:grid; grid-template-columns: 1.5fr 1fr; row-gap:8px;">
-        <div style="color:#aaa;">Total Theoretical</div> <div style="font-weight:bold; text-align:right;">{cum_theo/1000:,.2f} MWh</div>
-        <div style="color:#aaa;">Total Actual</div>      <div style="font-weight:bold; text-align:right;">{cum_act/1000:,.2f} MWh</div>
+        <div style="color:{Theme.TEXT_DIM};">Total Theoretical</div> <div style="font-weight:bold; text-align:right;">{cum_theo/1000:,.2f} MWh</div>
+        <div style="color:{Theme.TEXT_DIM};">Total Actual</div>      <div style="font-weight:bold; text-align:right;">{cum_act/1000:,.2f} MWh</div>
         <div style="border-bottom:1px solid rgba(250,250,250,0.2); grid-column:1/-1; margin:4px 0;"></div>
-        <div style="color:#aaa;">Efficiency</div>        <div style="font-weight:bold; text-align:right; color:#4CAF50;">{eff_pct:.1f}%</div>
-        <div style="color:#aaa;">Stow Loss</div>         <div style="font-weight:bold; text-align:right; color:#FF5252;">{stow_pct:.1f}%</div>
-        <div style="color:#aaa;">Shadow Loss</div>       <div style="font-weight:bold; text-align:right; color:#FFC107;">{shad_pct:.2f}%</div>
-        <div style="color:#aaa;">Other / Cosine</div>    <div style="font-weight:bold; text-align:right; color:#9E9E9E;">{other_pct:.2f}%</div>
+        <div style="color:{Theme.TEXT_DIM};">Efficiency</div>        <div style="font-weight:bold; text-align:right; color:{Theme.SUCCESS};">{eff_pct:.1f}%</div>
+        <div style="color:{Theme.TEXT_DIM};">Stow Loss</div>         <div style="font-weight:bold; text-align:right; color:{Theme.ERROR};">{stow_pct:.1f}%</div>
+        <div style="color:{Theme.TEXT_DIM};">Shadow Loss</div>       <div style="font-weight:bold; text-align:right; color:{Theme.WARNING};">{shad_pct:.2f}%</div>
+        <div style="color:{Theme.TEXT_DIM};">Other / Cosine</div>    <div style="font-weight:bold; text-align:right; color:#9E9E9E;">{other_pct:.2f}%</div>
     </div>
 </div>
 """
@@ -462,7 +463,7 @@ if view_mode == "Simulation Results":
                 fig_surf.add_trace(go.Scatter3d(
                     x=wf_x, y=wf_y, z=wf_z,
                     mode='lines', name='Theoretical',
-                    line=dict(color='black', width=3, dash='dot'),
+                    line=dict(color=Theme.THEORETICAL_LINE, width=3, dash='dot'),
                     connectgaps=False
                 ))
             
@@ -702,7 +703,7 @@ elif view_mode == "3D Analysis":
     # 1. POWER CHART
     mc = go.Figure()
     mc.add_trace(go.Scatter(x=x_times, y=y_theo, name="Theo [kW]", line=dict(color='gray', dash='dot')))
-    mc.add_trace(go.Scatter(x=x_times, y=y_act, name="Actual [kW]", fill='tozeroy', line=dict(color='#1f77b4')))
+    mc.add_trace(go.Scatter(x=x_times, y=y_act, name="Actual [kW]", fill='tozeroy', line=dict(color=Theme.PRIMARY)))
     
     if clash_x:
         mc.add_trace(go.Scatter(x=clash_x, y=clash_y, mode='markers', name="Clash", marker=dict(color='red', size=8, symbol='x')))
@@ -716,7 +717,7 @@ elif view_mode == "3D Analysis":
     
     fig_sun = go.Figure()
     fig_sun.add_trace(go.Scatter(x=x_times, y=y_az, name="Azimuth [°]", line=dict(color='orange')))
-    fig_sun.add_trace(go.Scatter(x=x_times, y=y_el, name="Elevation [°]", line=dict(color='gold'), yaxis="y2"))
+    fig_sun.add_trace(go.Scatter(x=x_times, y=y_el, name="Elevation [°]", line=dict(color=Theme.WARNING), yaxis="y2"))
     
     fig_sun.update_layout(
         height=200, margin=dict(l=0,r=0,t=20,b=20),
@@ -730,16 +731,16 @@ elif view_mode == "3D Analysis":
     # --- SHARED INFO HELPER ---
     def get_info_html(frame, day_sum):
         act_p = (frame['act_w']/frame['theo_w'])*100 if frame['theo_w']>0 else 0
-        safe_html = "<span style='color:green'>✅ SAFE</span>" if not frame['safety'] else "<span style='color:red'>⚠️ CLASH</span>"
+        safe_html = f"<span style='color:{Theme.SUCCESS}'>✅ SAFE</span>" if not frame['safety'] else f"<span style='color:{Theme.ERROR}'>⚠️ CLASH</span>"
         return f"""
         <div style="font-size:0.9em; display: grid; grid-template-columns: 80px 1fr; row-gap: 4px; margin-bottom: 1rem;">
-            <div style="color:gray">Date</div>      <div style="font-weight:bold">{day_sum['date'].strftime("%Y-%m-%d")}</div>
-            <div style="color:gray">Time</div>      <div style="font-weight:bold">{frame['time'].strftime("%H:%M")}</div>
-            <div style="color:gray">Sun Az</div>    <div>{frame['sun_az']:.1f}°</div>
-            <div style="color:gray">Sun El</div>    <div>{frame['sun_el']:.1f}°</div>
-            <div style="color:gray">Total Pwr</div> <div>{frame['theo_w']/1000:.1f} kW</div>
-            <div style="color:gray">Actual %</div>  <div>{frame['act_w']/1000:.1f} kW ({act_p:.0f}%)</div>
-            <div style="color:gray">Status</div>    <div>{safe_html}</div>
+            <div style="color:{Theme.TEXT_DIM}">Date</div>      <div style="font-weight:bold">{day_sum['date'].strftime("%Y-%m-%d")}</div>
+            <div style="color:{Theme.TEXT_DIM}">Time</div>      <div style="font-weight:bold">{frame['time'].strftime("%H:%M")}</div>
+            <div style="color:{Theme.TEXT_DIM}">Sun Az</div>    <div>{frame['sun_az']:.1f}°</div>
+            <div style="color:{Theme.TEXT_DIM}">Sun El</div>    <div>{frame['sun_el']:.1f}°</div>
+            <div style="color:{Theme.TEXT_DIM}">Total Pwr</div> <div>{frame['theo_w']/1000:.1f} kW</div>
+            <div style="color:{Theme.TEXT_DIM}">Actual %</div>  <div>{frame['act_w']/1000:.1f} kW ({act_p:.0f}%)</div>
+            <div style="color:{Theme.TEXT_DIM}">Status</div>    <div>{safe_html}</div>
         </div>
         """
 
