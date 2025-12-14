@@ -25,12 +25,11 @@ PLANT_ROTATION = 5.0
 # ==========================================
 # 1. PAGE CONFIG
 # ==========================================
-st.set_page_config(page_title="LCP-Sim v3.0", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title="LCP-Sim", layout="wide", page_icon="🌤️")
 
+# --- CUSTOM CSS ---
 st.markdown("""
 <style>
-    .block-container {
-        padding-top: 2rem; 
         padding-bottom: 0rem;
         padding-left: 2rem;
         padding-right: 2rem;
