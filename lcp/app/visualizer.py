@@ -115,7 +115,7 @@ class PlantVisualizer:
         
         return data
 
-    def _get_dynamic_traces(self, states: List[PanelState], sun_vec: np.ndarray, show_rays: bool = False, show_pivots: bool = True) -> List[go.Trace]:
+    def _get_dynamic_traces(self, states: List[PanelState], sun_vec: np.ndarray, show_rays: bool = False, show_pivots: bool = True, show_clash_emphasis: bool = True) -> List[go.Trace]:
         """Returns list of dynamic traces. Optimized & Vectorized."""
         data = []
         
@@ -131,6 +131,11 @@ class PlantVisualizer:
         p_i, p_j, p_k = [], [], []
         p_facecolor = []
         p_vert_count = 0
+        
+        # Shadows (Mesh)
+        sh_x, sh_y, sh_z = [], [], []
+        sh_i, sh_j, sh_k = [], [], []
+        sh_vert_count = 0
         
         pv_x, pv_y, pv_z = [], [], []
         pv_i, pv_j, pv_k = [], [], []
@@ -162,9 +167,10 @@ class PlantVisualizer:
         for s_idx, s in enumerate(states):
             # 1. Colors
             c_glass = '#1f77b4' # Blue
-            if s.mode == "STOW": c_glass = 'red' 
-            if s.collision and s.mode == "TRACKING": c_glass = 'orange'
-            if s.shadow_loss > 0: c_glass = 'gray' 
+            if show_clash_emphasis:
+                if s.mode == "STOW": c_glass = 'red' 
+                if s.collision and s.mode == "TRACKING": c_glass = 'orange'
+            # Removed gray logic for shadows
             c_side = 'darkgray'
             
             # 2. Panel Geometry
@@ -210,8 +216,35 @@ class PlantVisualizer:
                 pv_k.extend([x + pv_vert_count for x in ico_k])
                 
                 pv_vert_count += 12
+            
+            # 5. Exact Shadow Polygons
+            if s.shadow_polys:
+                # Calculate offset to glass surface
+                # Pivot Frame -> Geom Center (Pivot Offset) -> Top Surface (Thickness/2)
+                # Ensure we push slightly +0.05 to avoid z-fight with glass
+                shift_vec = s.rotation @ (np.array(self.geo.pivot_offset) + np.array([0, 0, t/2.0 + 0.05]))
                 
-            # 5. Rays (No Intersection Check)
+                for poly in s.shadow_polys:
+                    if len(poly) < 3: continue
+                    
+                    shifted = poly + shift_vec
+                    
+                    # Vertices
+                    start_idx = sh_vert_count
+                    sh_x.extend(shifted[:,0])
+                    sh_y.extend(shifted[:,1])
+                    sh_z.extend(shifted[:,2])
+                    
+                    n_v = len(shifted)
+                    # Simple Fan Triangulation (Converions ok for convex-ish)
+                    for k in range(1, n_v - 1):
+                        sh_i.append(start_idx)
+                        sh_j.append(start_idx + k)
+                        sh_k.append(start_idx + k + 1)
+                    
+                    sh_vert_count += n_v
+
+            # 6. Rays (No Intersection Check)
             if show_rays:
                 xs = np.linspace(-w*0.4, w*0.4, 3)
                 ys = np.linspace(-l*0.4, l*0.4, 3)
@@ -234,7 +267,7 @@ class PlantVisualizer:
                     out_x.extend([r_glob[ii,0], r_gnd[ii,0], None])
                     out_y.extend([r_glob[ii,1], r_gnd[ii,1], None])
                     out_z.extend([r_glob[ii,2], r_gnd[ii,2], None])
-
+ 
         # --- TRACES ---
         
         data.append(go.Mesh3d(
@@ -242,6 +275,14 @@ class PlantVisualizer:
             facecolor=p_facecolor, opacity=1.0, flatshading=True,
             showlegend=False, hoverinfo='skip', lightposition=dict(x=0,y=0,z=100)
         ))
+        
+        # Shadow Trace
+        if sh_x:
+            data.append(go.Mesh3d(
+                x=sh_x, y=sh_y, z=sh_z, i=sh_i, j=sh_j, k=sh_k,
+                color='black', opacity=0.6, flatshading=True,
+                showlegend=False, hoverinfo='skip'
+            ))
         
         data.append(go.Scatter3d(
             x=e_x, y=e_y, z=e_z, mode='lines', 
@@ -261,10 +302,10 @@ class PlantVisualizer:
                  
         return data
 
-    def render_scene(self, states: List[PanelState], sun_vec: np.ndarray, show_rays: bool = False, show_pivots: bool = True) -> go.Figure:
+    def render_scene(self, states: List[PanelState], sun_vec: np.ndarray, show_rays: bool = False, show_pivots: bool = True, show_clash_emphasis: bool = True) -> go.Figure:
         """Wrapper for backward compatibility."""
         static = self._get_static_traces()
-        dynamic = self._get_dynamic_traces(states, sun_vec, show_rays, show_pivots)
+        dynamic = self._get_dynamic_traces(states, sun_vec, show_rays, show_pivots, show_clash_emphasis)
         
         layout = go.Layout(scene=dict(aspectmode='data'), margin=dict(l=0, r=0, b=0, t=0))
         fig = go.Figure(data=static + dynamic, layout=layout)

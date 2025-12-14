@@ -120,47 +120,17 @@ class SimulationRunner:
             # Perfect track -> Normal // Sun -> Cos=1.
             # So Theoretical = Area * DNI.
             
-            total_area = 9.0 * (self.geo.width * self.geo.length) # 9 sqm
+            # Scale to Whole Plant
+            # Extrapolate from 9-panel kernel
+            # Avg per panel
+            n_kernel = 9.0
+            total_panels = self.cfg.total_panels
             
-            # Actual Power
-            # Sum of (Area * DNI * power_factor)
-            actual_p = 0.0
-            stow_loss_p = 0.0
-            shad_loss_p = 0.0
+            p_theo_plant = (self.geo.width * self.geo.length * total_panels) * dni
             
-            for s in states:
-                # p_factor = cos * (1-shadow) [0 if stow]
-                # We need to break down losses.
-                
-                # Theoretical for this panel
-                p_theo = (self.geo.width * self.geo.length) * dni
-                
-                if s.mode == "STOW":
-                    # All potential is lost to Stow
-                    # Except... wait. Stow angle might catch some light?
-                    # Spec: "Stowed panels generate 0 Watts."
-                    loss = p_theo
-                    stow_loss_p += loss
-                else:
-                    # Tracking
-                    # Loss due to Cosine? 
-                    # Spec: "Theoretical Power... max potential if tracking perfectly (CosLoss included)."
-                    # Wait, usually Theoretical includes Cos Loss relative to generic flat?
-                    # "Theoretical Power (kW): The max potential if tracking perfectly."
-                    # If tracking perfectly, Cos=1. (Normal points to sun).
-                    # So Theoretical = DNI * Area.
-                    
-                    # Actual = DNI * Area * Cos(alignment_error) * (1-Shadow).
-                    # My Rig moves perfectly to Sun. So Cos=1.
-                    # Unless limits hit? (My rig has no limits yet).
-                    
-                    val = p_theo * s.power_factor
-                    actual_p += val
-                    
-                    # Shadow Loss
-                    # shad_loss matches fraction of area?
-                    # loss = p_theo * s.shadow_loss
-                    shad_loss_p += (p_theo * s.shadow_loss)
+            p_act_plant = (actual_p / n_kernel) * total_panels
+            p_stow_plant = (stow_loss_p / n_kernel) * total_panels
+            p_shad_plant = (shad_loss_p / n_kernel) * total_panels
             
             # Store Row
             res = {
@@ -170,10 +140,10 @@ class SimulationRunner:
                 "Local_Az": local_az,
                 "DNI": dni,
                 "Safety_Mode": safety_triggered,
-                "Theo_Power": total_area * dni,
-                "Actual_Power": actual_p,
-                "Stow_Loss": stow_loss_p,
-                "Shadow_Loss": shad_loss_p
+                "Theo_Power": p_theo_plant,
+                "Actual_Power": p_act_plant,
+                "Stow_Loss": p_stow_plant,
+                "Shadow_Loss": p_shad_plant
             }
             results.append(res)
             

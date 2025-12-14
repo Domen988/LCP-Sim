@@ -17,6 +17,7 @@ import time
 from lcp.core.geometry import PanelGeometry
 from lcp.core.config import ScenarioConfig
 from lcp.simulation import SimulationRunner
+from lcp.physics.engine import PanelState
 from lcp.app.visualizer import PlantVisualizer
 
 PLANT_ROTATION = 5.0
@@ -65,15 +66,19 @@ with st.sidebar.expander("Geometry Config", expanded=False):
 
 # Plant Size
 with st.sidebar.expander("Plant Sizing", expanded=False):
-    n_rows = st.number_input("Rows", 1, 1000, 20)
-    n_cols = st.number_input("Cols", 1, 1000, 12)
+    n_rows = st.number_input("Rows", 3, 1000, 12)
+    n_cols = st.number_input("Cols", 3, 1000, 20)
+    total_panels = n_rows * n_cols
+    st.info(f"Total Panels: {total_panels:,}")
 
 # Simulation Settings
 with st.sidebar.expander("Simulation Settings", expanded=False):
     # Fix: Use date() object for default
     start_date = st.date_input("Start Date", date(2025, 1, 1))
     
-    full_year_sim = st.checkbox("Full Year Simulation (365 Days)", value=False)
+    full_year_sim = st.checkbox("Full year", value=False)
+    
+    timestep_min = st.number_input("Timestep (min)", 1, 60, 6)
     
     if full_year_sim:
         sim_days = 365
@@ -118,10 +123,12 @@ if st.session_state.get("run_trigger", False):
             thickness=thickness,
             pivot_offset=(0.0, 0.0, off_z)
         )
+        # 3. Simulation Loop
         cfg = ScenarioConfig(
             grid_pitch_x=pitch_x,
             grid_pitch_y=pitch_y, 
-            tolerance=tolerance
+            tolerance=tolerance,
+            total_panels=total_panels
         )
         
         # 2. Update Kernel (3x3 RVE)
@@ -137,16 +144,85 @@ if st.session_state.get("run_trigger", False):
                 y = (r - 1) * cfg.grid_pitch_y
                 x = (c - 1) * cfg.grid_pitch_x
                 runner.kernel.pivots[(r,c)] = np.array([float(x), float(y), 0.0])
-        
+                
         # 3. Simulation Loop
-        scale_efficiency = (n_rows * n_cols) / 9.0 
+        # WEIGHTING LOGIC (Biased Scaling)
+        # Map 3x3 Kernel indices to Plant Panel Counts
+        # R=Rows, C=Cols
+        R = n_rows
+        C = n_cols
+        
+        # Count Interior Odd/Even
+        cnt_int_even = 0
+        cnt_int_odd = 0
+        for r_i in range(1, n_rows - 1):
+            for c_i in range(1, n_cols - 1):
+                if (r_i + c_i) % 2 == 0: cnt_int_even += 1
+                else: cnt_int_odd += 1
+
+        # Count Edge Odd/Even (Excluding Corners)
+        # Top (r=0)
+        cnt_top_odd = 0; cnt_top_even = 0
+        for c_i in range(1, n_cols - 1):
+            if (0 + c_i) % 2 == 0: cnt_top_even += 1
+            else: cnt_top_odd += 1
+            
+        # Bot (r=N-1)
+        cnt_bot_odd = 0; cnt_bot_even = 0
+        for c_i in range(1, n_cols - 1):
+            if ((n_rows - 1) + c_i) % 2 == 0: cnt_bot_even += 1
+            else: cnt_bot_odd += 1
+            
+        # Left (c=0)
+        cnt_left_odd = 0; cnt_left_even = 0
+        for r_i in range(1, n_rows - 1):
+            if (r_i + 0) % 2 == 0: cnt_left_even += 1
+            else: cnt_left_odd += 1
+            
+        # Right (c=N-1)
+        cnt_right_odd = 0; cnt_right_even = 0
+        for r_i in range(1, n_rows - 1):
+            if (r_i + (n_cols - 1)) % 2 == 0: cnt_right_even += 1
+            else: cnt_right_odd += 1
+        
+        # Weight Map (r,c) -> Count
+        weights = {}
+        # 1. Base Corners (Stowed/Even)
+        weights[(0,0)] = 1; weights[(0,2)] = 1; weights[(2,0)] = 1; weights[(2,2)] = 1
+        
+        # 2. Edges
+        # Odd counts go to Odd Kernel Proxies (0,1), (2,1), (1,0), (1,2) -> Tracking
+        # Even counts go to Even Kernel Proxies (Corners) -> Stowed
+        
+        # Top
+        weights[(0,1)] = cnt_top_odd
+        weights[(0,0)] += cnt_top_even # Add Even Top to TL Corner
+        
+        # Bot
+        weights[(2,1)] = cnt_bot_odd
+        weights[(2,0)] += cnt_bot_even # Add Even Bot to BL Corner
+        
+        # Left
+        weights[(1,0)] = cnt_left_odd 
+        weights[(0,0)] += cnt_left_even # Add Even Left to TL Corner
+        
+        # Right
+        weights[(1,2)] = cnt_right_odd
+        weights[(0,2)] += cnt_right_even # Add Even Right to TR Corner
+        
+        # 3. Interior
+        weights[(1,1)] = cnt_int_even
+        
+        # Add Interior Odd to Right Edge (1,2) which is Odd/Tracking
+        weights[(1,2)] += cnt_int_odd
+        
         all_days = []
         
         progress_bar = st.progress(0)
         status_text = st.empty()
         
         # Calculate total steps for progress bar
-        steps_per_day = 240 # 24h / 6min
+        steps_per_day = int(24 * 60 / timestep_min)
         total_steps = sim_days * steps_per_day
         global_step = 0
         
@@ -155,8 +231,8 @@ if st.session_state.get("run_trigger", False):
         for d in range(sim_days):
             current_day_date = start_date + timedelta(days=d)
             start_dt = datetime.combine(current_day_date, datetime.min.time())
-            # Generate 6-min intervals
-            steps = [start_dt + timedelta(minutes=6*i) for i in range(steps_per_day)]
+            # Generate intervals
+            steps = [start_dt + timedelta(minutes=timestep_min*i) for i in range(steps_per_day)]
             
             day_frames = []
             day_stats = {
@@ -180,31 +256,34 @@ if st.session_state.get("run_trigger", False):
                 states, safety = runner.kernel.solve_timestep(local_az, sun.elevation, enable_safety=True)
                 dni = runner.get_dni(dt, data_matrix)
                 
-                # C. Calculate Power
+                # C. Calculate Power (Weighted Whole Plant)
                 panel_area = geo.width * geo.length
                 
-                # Theoretical (Ideal Tracking)
-                step_theo_w_rve = (9.0 * panel_area) * dni
+                # Theoretical (Ideal Tracking): Area * DNI
+                step_theo_w = (total_panels * panel_area) * dni
                 
-                # Actual
-                step_act_w_rve = sum([panel_area * dni * s.power_factor for s in states])
-                
-                # Losses
+                # Actual & Losses (Sum weighted components)
+                step_act_w = 0.0
                 step_stow_loss_w = 0.0
                 step_shad_loss_w = 0.0
                 
                 for s in states:
-                    p_theo_panel = panel_area * dni
-                    if s.mode == "STOW":
-                        step_stow_loss_w += p_theo_panel
-                    else:
-                        step_shad_loss_w += p_theo_panel * s.shadow_loss
+                    w_count = weights.get(s.index, 0)
+                    if w_count > 0:
+                        p_theo_panel = panel_area * dni
+                        step_act_w += p_theo_panel * s.power_factor * w_count
                         
-                # Extrapolate to Plant
-                day_stats["theo_kwh"] += (step_theo_w_rve * scale_efficiency) * 0.1 / 1000.0
-                day_stats["act_kwh"] += (step_act_w_rve * scale_efficiency) * 0.1 / 1000.0
-                day_stats["stow_loss_kwh"] += (step_stow_loss_w * scale_efficiency) * 0.1 / 1000.0
-                day_stats["shad_loss_kwh"] += (step_shad_loss_w * scale_efficiency) * 0.1 / 1000.0
+                        if s.mode == "STOW":
+                            # Loss = Theo - Actual (Includes Cosine Loss due to bad angle)
+                            step_stow_loss_w += p_theo_panel * (1.0 - s.power_factor) * w_count
+                        else:
+                            step_shad_loss_w += p_theo_panel * s.shadow_loss * w_count
+                
+                # Extrapolate to Plant (Already done via weights)
+                day_stats["theo_kwh"] += step_theo_w * 0.1 / 1000.0
+                day_stats["act_kwh"] += step_act_w * 0.1 / 1000.0
+                day_stats["stow_loss_kwh"] += step_stow_loss_w * 0.1 / 1000.0
+                day_stats["shad_loss_kwh"] += step_shad_loss_w * 0.1 / 1000.0
                 
                 if safety:
                     day_stats["clash_count"] += 1
@@ -215,8 +294,8 @@ if st.session_state.get("run_trigger", False):
                     "sun_az": sun.azimuth,
                     "sun_el": sun.elevation,
                     "safety": safety,
-                    "act_w": step_act_w_rve * scale_efficiency,
-                    "theo_w": step_theo_w_rve * scale_efficiency,
+                    "act_w": step_act_w,
+                    "theo_w": step_theo_w,
                     "states": states 
                 })
             
@@ -335,7 +414,7 @@ if view_mode == "Simulation Results":
             fig_surf.add_trace(go.Surface(
                 z=z_data, x=x_times, y=y_dates,
                 colorscale='Viridis', 
-                colorbar=dict(title="Power (kW)", len=0.6, y=0.5)
+                colorbar=dict(title="Plant Power (kW)", len=0.6, y=0.5)
             ))
             
             # 2. Theoretical Lines (Wireframe)
@@ -371,16 +450,16 @@ if view_mode == "Simulation Results":
                 ))
             
             fig_surf.update_layout(
+                title=None,
                 scene=dict(
-                    xaxis=dict(title="Time (Morning → Evening)"),
+                    xaxis=dict(title="Time"),
                     yaxis=dict(title="Date"),
                     zaxis=dict(title="Power (kW)"),
-                    aspectmode='manual', 
-                    aspectratio=dict(x=1.0, y=1.0, z=1.0),
-                    camera=dict(eye=dict(x=-1.5, y=-1.5, z=0.5))
+                    aspectmode='cube',
+                    camera=dict(projection=dict(type="orthographic"))
                 ),
-                margin=dict(l=0, r=0, b=0, t=10), # No Title
-                height=600, 
+                margin=dict(l=0, r=0, b=0, t=20),
+                height=500,
                 legend=dict(x=0, y=1)
             )
             st.plotly_chart(fig_surf, use_container_width=True)
@@ -480,6 +559,8 @@ elif view_mode == "3D Analysis":
         show_rays = st.checkbox("Show Sunrays", value=True)
         show_pivots = st.checkbox("Show Pivots", value=True)
         show_stow = st.checkbox("Stow", value=True, help="Uncheck to see collisions (Safety Off)")
+        show_clash_emphasis = st.checkbox("Clash Emphasis", value=True, help="Highlight Stow/Clash in Red/Orange. Disable to see shadows.")
+        show_full_plant = st.checkbox("Show Full Plant", value=False)
 
     # --- RIGHT: VIZ & SLIDER & CHART ---
     with col_right:
@@ -487,6 +568,92 @@ elif view_mode == "3D Analysis":
         ph_slider = st.empty()       # Mid: Slider
         ph_chart = st.empty()        # Bot: Power Chart
         ph_sun_chart = st.empty()    # Bot: Sun Chart
+        
+    # --- HELPER: GENERATE FULL PLANT STATES ---
+    def expand_to_full_plant(kernel_states):
+        full_states = []
+        k_map = {s.index: s for s in kernel_states}
+        
+        center_r = (n_rows - 1) / 2.0
+        center_c = (n_cols - 1) / 2.0
+        
+        # Check if we should use checkerboard proxy (Only if Interior is Stowed/Checkerboarded)
+        ref_center = k_map.get((1,1))
+        use_checkerboard_proxy = (ref_center and ref_center.mode == "STOW")
+        
+        for r in range(n_rows):
+            for c in range(n_cols):
+                # 1. Determine Target Region and Parity
+                is_top = (r == 0)
+                is_bot = (r == n_rows - 1)
+                is_left = (c == 0)
+                is_right = (c == n_cols - 1)
+                
+                parity = (r + c) % 2 # 0=Even, 1=Odd
+                
+                # 2. Select Kernel Reference (kr, kc)
+                # Attempt to match Region + Parity
+                kr, kc = 1, 1 # Default Interior
+                
+                if is_top:
+                    kr = 0
+                    if is_left: kc = 0 # TL Corner (Even)
+                    elif is_right: kc = 2 # TR Corner (Even)
+                    else: 
+                        # Top Edge. Match Parity.
+                        kc = 1 if parity == 1 else 0
+                elif is_bot:
+                    kr = 2
+                    if is_left: kc = 0 # BL Corner (Even)
+                    elif is_right: kc = 2 # BR Corner (Even)
+                    else:
+                        kc = 1 if parity == 1 else 0
+                elif is_left:
+                    kc = 0
+                    # Left Edge.
+                    kr = 1 if parity == 1 else 0
+                elif is_right:
+                    kc = 2
+                    # Right Edge.
+                    kr = 1 if parity == 1 else 0
+                else:
+                    # Interior
+                    # If Checkerboard Stow is Active: Use 1,1 (Even/Stowed) or 1,2 (Odd/Tracking Proxy)
+                    # If Normal Tracking: Use 1,1 (Tracking) for ALL (Uniform Shadowing)
+                    
+                    if use_checkerboard_proxy:
+                        kr, kc = (1, 1) if parity == 0 else (1, 2)
+                    else:
+                        kr, kc = (1, 1)
+                
+                # Source State
+                ref = k_map.get((kr, kc))
+                if not ref: ref = k_map.get((1,1))
+                
+                # Position relative to center
+                pos_x = (c - center_c) * cfg_used.grid_pitch_x
+                pos_y = (r - center_r) * cfg_used.grid_pitch_y
+                
+                new_s = PanelState(
+                    index=(r,c),
+                    position=np.array([pos_x, pos_y, 0.0]),
+                    rotation=ref.rotation,
+                    mode=ref.mode,
+                    collision=ref.collision,
+                    theta_loss=ref.theta_loss,
+                    stow_loss=ref.stow_loss,
+                    shadow_loss=ref.shadow_loss,
+                    shadow_polys=[],
+                    power_factor=ref.power_factor
+                )
+                
+                if ref.shadow_polys:
+                     offset = new_s.position - ref.position
+                     new_s.shadow_polys = [p + offset for p in ref.shadow_polys]
+                
+                full_states.append(new_s)
+                
+        return full_states
         
     # --- SHARED CHART GENERATION ---
     y_act = [f['act_w']/1000.0 for f in day_frames_light]
@@ -562,7 +729,7 @@ elif view_mode == "3D Analysis":
         frames = []
         static_traces = viz._get_static_traces() + [ghost_trace]
         
-        # Pre-Init Kernel
+        # Pre-Init Kernel (for Stow recalc if needed)
         if not show_stow:
              runner.kernel.geo = geo_used
              runner.kernel.collider.geo = geo_used
@@ -586,7 +753,10 @@ elif view_mode == "3D Analysis":
             el_rad = np.radians(f['sun_el'])
             sv = np.array([np.cos(el_rad)*np.sin(az_rad), np.cos(el_rad)*np.cos(az_rad), np.sin(el_rad)])
             
-            dyn = viz._get_dynamic_traces(states, sv, show_rays=show_rays, show_pivots=show_pivots)
+            # EXPAND
+            states_to_render = expand_to_full_plant(states) if show_full_plant else states
+            
+            dyn = viz._get_dynamic_traces(states_to_render, sv, show_rays=show_rays, show_pivots=show_pivots, show_clash_emphasis=show_clash_emphasis)
             
             safe_txt = "⚠️ CLASH" if f['safety'] else "✅ SAFE"
             act_pct = (f['act_w']/f['theo_w'])*100 if f['theo_w'] > 0 else 0
@@ -613,7 +783,9 @@ elif view_mode == "3D Analysis":
             sliders=[dict(currentvalue=dict(prefix=""), pad=dict(t=50), len=0.9, x=0.1, steps=[dict(args=[[f.name], dict(frame=dict(duration=0, redraw=True), mode='immediate')], label=f.name, method='animate') for f in frames])],
             margin=dict(l=0,r=0,b=60,t=40), height=400, scene=scene_cfg, uirevision='sim_3d_anim'
         )
-        fig.update_layout(annotations=frames[0].layout.annotations)
+        # Update Annotations for first frame
+        if frames:
+             fig.update_layout(annotations=frames[0].layout.annotations)
         
         prog_bar.empty()
         
@@ -654,8 +826,11 @@ elif view_mode == "3D Analysis":
         el_rad = np.radians(frame['sun_el'])
         sv = np.array([np.cos(el_rad)*np.sin(az_rad), np.cos(el_rad)*np.cos(az_rad), np.sin(el_rad)])
         
+        # EXPAND
+        states_to_render = expand_to_full_plant(states) if show_full_plant else states
+        
         # 3. Viz
-        fig = viz.render_scene(states, sv, show_rays=show_rays, show_pivots=show_pivots)
+        fig = viz.render_scene(states_to_render, sv, show_rays=show_rays, show_pivots=show_pivots, show_clash_emphasis=show_clash_emphasis)
         fig.add_trace(ghost_trace)
         fig.update_layout(margin=dict(l=0,r=0,b=0,t=0), height=400, uirevision='sim_3d_view', scene=scene_cfg)
         
