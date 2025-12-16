@@ -79,7 +79,7 @@ class InfiniteKernel:
         # Broadcasting would be faster but loop is small (max 8)
         return [(current_pos + off, current_rot) for off in offsets]
 
-    def solve_timestep(self, sun_az: float, sun_el: float, enable_safety: bool = True) -> Tuple[List[PanelState], bool]:
+    def solve_timestep(self, sun_az: float, sun_el: float, enable_safety: bool = True, stow_override: Optional[Tuple[float, float]] = None) -> Tuple[List[PanelState], bool]:
         """
         Solves the state of the 3x3 kernel for a given sun position.
         """
@@ -89,18 +89,55 @@ class InfiniteKernel:
         else:
             target_rot = self.rig.get_orientation(sun_az, sun_el)
             
+        # Prepare Manual Rotation if needed
+        manual_rot = None
+        if stow_override:
+            ov_az, ov_el = stow_override
+            manual_rot = self.rig.get_orientation(ov_az, ov_el)
+
         # 2. Check Collisions
         collision_detected = False
         idx_list = list(self.pivots.keys())
+        
+        # Determine rotations for collision check
+        # If Override: explicit map. Else: Uniform target_rot.
+        rot_map = {}
+        if stow_override:
+            for idx in idx_list:
+                r, c = idx
+                if (r + c) % 2 == 0:
+                    rot_map[idx] = manual_rot
+                else:
+                    rot_map[idx] = target_rot
+        
         for i in range(len(idx_list)):
             for j in range(i + 1, len(idx_list)):
-                if self.collider.check_clash(self.pivots[idx_list[i]], self.pivots[idx_list[j]], target_rot):
+                idx_i = idx_list[i]
+                idx_j = idx_list[j]
+                
+                if stow_override:
+                    # Heterogeneous Check
+                    r_i = rot_map[idx_i]
+                    r_j = rot_map[idx_j]
+                    # Optimization: Use fast path if matrices are identical
+                    # Note: We use 'is' check if they are same object from get_orientation cache or local var
+                    # but here they are numpy arrays.
+                    if np.array_equal(r_i, r_j): 
+                        c_res = self.collider.check_clash(self.pivots[idx_i], self.pivots[idx_j], r_i, rot_b=None)
+                    else:
+                        c_res = self.collider.check_clash(self.pivots[idx_i], self.pivots[idx_j], r_i, rot_b=r_j)
+                else:
+                    # Homogeneous (Standard) Check
+                    c_res = self.collider.check_clash(self.pivots[idx_i], self.pivots[idx_j], target_rot)
+                
+                if c_res:
                     collision_detected = True
                     break
             if collision_detected:
                 break
                 
         # 3. Determine Modes & Kinematics (Pass 1)
+        # Default Auto-Stow
         stow_rot = self.rig.get_orientation(sun_az, 45.0)
         
         rad_az = np.radians(sun_az)
@@ -118,7 +155,15 @@ class InfiniteKernel:
                 idx = (r,c)
                 is_even = ((r + c) % 2 == 0)
                 
-                if collision_detected and is_even and enable_safety:
+                if stow_override:
+                    # Specific Manual Logic
+                    if is_even:
+                        mode = "MANUAL_STOW"
+                        rot = manual_rot
+                    else:
+                        mode = "TRACKING"
+                        rot = target_rot
+                elif collision_detected and is_even and enable_safety:
                     mode = "STOW"
                     rot = stow_rot
                 else:
@@ -136,25 +181,28 @@ class InfiniteKernel:
                 pos, rot, mode = panel_kinematics[idx]
                 
                 # Use Virtual Neighbors for infinite plant emulation
-                # Note: 'rot' is uniform (Safety=False) or We assume neighbor rotates same (good approx)
                 v_neighbors = self._get_virtual_neighbors(r, c, pos, rot)
                 
                 # Shadow Loss
+                # In Override mode, we still want to see Shadows if possible.
+                # But if collision, logic usually skips shadows.
+                # Spec says: "Status Banner: RED CLASH... GREEN SAFE".
+                # It doesn't explicitly ask for Shadow Power during Teach Mode.
+                # We can keep current logic: IF collision -> 0 shadow calc.
+                
                 if collision_detected:
                     shad_loss = 0.0
                     shad_polys = []
                 else:
-                    # Pass virtual neighbors instead of finite kernel neighbors
                     shad_loss, shad_polys = self.shadower.calculate_loss(pos, rot, v_neighbors, sun_vec)
                 
                 # Cosine Loss
                 normal = rot[:, 2]
                 cos_theta = max(0.0, np.dot(normal, sun_vec))
                 
-                stow_loss = 1.0 if mode == "STOW" else 0.0
+                stow_loss = 1.0 if "STOW" in mode else 0.0
                 
-                if mode == "STOW":
-                    # User Rule: STOWED panels generate 0.
+                if "STOW" in mode:
                     p_factor = 0.0 
                 else:
                     p_factor = cos_theta * (1.0 - shad_loss)

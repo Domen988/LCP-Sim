@@ -31,37 +31,26 @@ class CollisionDetector:
     def check_clash(self, 
                     pivot_a: np.ndarray, 
                     pivot_b: np.ndarray, 
-                    rotation_matrix: np.ndarray) -> bool:
+                    rot_a: np.ndarray,
+                    rot_b: np.ndarray = None) -> bool:
         """
-        Checks if Panel B clashes with Panel A, assuming both have same orientation.
-        
-        Args:
-            pivot_a: (3,) Global position of pivot A
-            pivot_b: (3,) Global position of pivot B
-            rotation_matrix: (3,3) Orientation of both panels (Local -> Global)
+        Checks collision between Panel A and Panel B.
+        If rot_b is None, assumes parallel panels (Optimized).
+        If rot_b is provided, uses Separating Axis Theorem (SAT).
         """
+        if rot_b is None:
+            return self._check_parallel(pivot_a, pivot_b, rot_a)
+        else:
+            return self._check_sat(pivot_a, pivot_b, rot_a, rot_b)
+
+    def _check_parallel(self, pivot_a, pivot_b, rotation_matrix):
         # Vector D in Global Frame
         global_d = pivot_b - pivot_a
         
         # Rotate D into Local Frame of Panel A
-        # Local = R.T * Global
         local_d = rotation_matrix.T @ global_d
         
-        # Check against bounding box
         dx, dy, dz = np.abs(local_d)
-        
-        # Since we are checking if CENTER of B is inside EXPANDED bounds of A?
-        # The spec says: "Check if the center of a Neighbor Panel lies inside the 'Expanded Bounds' of the Target Panel."
-        # Because panels are parallel, the bounding box of B is axis-aligned with A.
-        # The condition for intersection of two AABBs (Axis Aligned Bounding Boxes):
-        # |center_dist_x| < (half_size_a + half_size_b)
-        # Here sizes are identical. So |dx| < (half_w + half_w) = width.
-        # Plus tolerance.
-        
-        # Spec Logic: "If |dx_local| < (Width + Tolerance)..."
-        # My geom has Width = full width.
-        # So we check if center distance < Width. 
-        # Yes, |x1 - x2| < w1/2 + w2/2 = w.
         
         limit_x = self.geo.width + self.cfg.tolerance
         limit_y = self.geo.length + self.cfg.tolerance
@@ -69,5 +58,74 @@ class CollisionDetector:
         
         if (dx < limit_x) and (dy < limit_y) and (dz < limit_z):
             return True
-            
         return False
+
+    def _check_sat(self, pivot_a, pivot_b, rot_a, rot_b):
+        """
+        General OBB Collision using Separating Axis Theorem (SAT).
+        """
+        # 1. Setup Box A
+        # Center A (Global) = Pivot A + Rot A @ Offset
+        # We need "Geometric Center" for SAT symmetry
+        c_a = pivot_a + rot_a @ np.array(self.geo.pivot_offset)
+        axes_a = rot_a.T # Rows are axes? Global axes are Columns of rot_a.
+        # Axes should be the unitary vectors. rot_a columns.
+        ax_a = [rot_a[:,0], rot_a[:,1], rot_a[:,2]]
+        
+        # Extents A (Half-Widths + Tolerance/2)
+        # Note: tolerance in parallel check was added to FULL width.
+        # So "dist < W + tol".
+        # In SAT: "dist < radA + radB". radA = W/2 + tol/2.
+        # So sum radii = W + tol. Consistent.
+        tol_half = self.cfg.tolerance / 2.0
+        ext_a = np.array([
+            self.geo.width/2.0 + tol_half,
+            self.geo.length/2.0 + tol_half,
+            self.geo.thickness/2.0 + tol_half
+        ])
+
+        # 2. Setup Box B
+        c_b = pivot_b + rot_b @ np.array(self.geo.pivot_offset)
+        ax_b = [rot_b[:,0], rot_b[:,1], rot_b[:,2]]
+        ext_b = ext_a # Same geometry
+
+        # 3. Translation Vector
+        T = c_b - c_a
+
+        # 4. Check Axes
+        # 3 Face Normals of A
+        for i in range(3):
+            if not self._sat_overlap(T, ax_a[i], ax_a, ext_a, ax_b, ext_b): return False
+        
+        # 3 Face Normals of B
+        for i in range(3):
+            if not self._sat_overlap(T, ax_b[i], ax_a, ext_a, ax_b, ext_b): return False
+
+        # 9 Cross Products
+        for i in range(3):
+            for j in range(3):
+                # Robust Cross Product
+                axis = np.cross(ax_a[i], ax_b[j])
+                # If parallel axes, cross product is 0. Skip.
+                if np.dot(axis, axis) < 1e-6: continue
+                axis = axis / np.linalg.norm(axis)
+                if not self._sat_overlap(T, axis, ax_a, ext_a, ax_b, ext_b): return False
+
+        return True
+
+    def _sat_overlap(self, T, axis, ax_a, ext_a, ax_b, ext_b):
+        # Project T
+        t_proj = abs(np.dot(T, axis))
+        
+        # Project A
+        # Radius A = sum( extent_i * abs(dot(axis_i, axis)) )
+        ra = (ext_a[0] * abs(np.dot(ax_a[0], axis)) +
+              ext_a[1] * abs(np.dot(ax_a[1], axis)) +
+              ext_a[2] * abs(np.dot(ax_a[2], axis)))
+              
+        # Project B
+        rb = (ext_b[0] * abs(np.dot(ax_b[0], axis)) +
+              ext_b[1] * abs(np.dot(ax_b[1], axis)) +
+              ext_b[2] * abs(np.dot(ax_b[2], axis)))
+              
+        return t_proj < (ra + rb)

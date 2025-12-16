@@ -55,7 +55,7 @@ st.markdown("""
 # 2. SIDEBAR CONTROL ROOM
 # ==========================================
 st.sidebar.title("LCP Control Room")
-view_mode = st.sidebar.radio("View", ["Simulation Results", "3D Analysis"], index=1)
+view_mode = st.sidebar.radio("View", ["Simulation Results", "3D Analysis", "Stow Recorder"], index=1)
 st.sidebar.markdown("---")
 
 # Persistence Section
@@ -798,6 +798,9 @@ elif view_mode == "3D Analysis":
     with col_mid:
         st.markdown("### Frame Info")
         ph_frame_info = st.empty()
+
+
+
         
         st.markdown("### Controls")
         enable_anim = st.checkbox("Smooth Animation", value=False)
@@ -1109,3 +1112,30 @@ elif view_mode == "3D Analysis":
         # 5. Info
         with ph_frame_info:
             st.markdown(get_info_html(frame, day_data['summary']), unsafe_allow_html=True)
+
+
+# --- VIEW 3: STOW RECORDER ---
+elif view_mode == "Stow Recorder":
+    from lcp.app.components.stow_recorder import render_stow_recorder
+    
+    # We need current Geo/Cfg.
+    # If a simulation was run, use that. Else use Sidebar inputs.
+    # Re-construct from sidebar inputs:
+    thickness = 0.05
+    off_z = pivot_depth - (thickness / 2.0)
+    
+    current_geo = PanelGeometry(
+        width=panel_width,
+        length=panel_length,
+        thickness=thickness,
+        pivot_offset=(0.0, 0.0, off_z)
+    )
+    
+    current_cfg = ScenarioConfig(
+        grid_pitch_x=pitch_x,
+        grid_pitch_y=pitch_y, 
+        tolerance=tolerance,
+        total_panels=total_panels
+    )
+
+    render_stow_recorder(st.empty(), current_geo, current_cfg, st.session_state.get("simulation_results"))
