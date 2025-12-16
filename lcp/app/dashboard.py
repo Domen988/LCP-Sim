@@ -13,8 +13,7 @@ from datetime import datetime, timedelta, date
 import plotly.graph_objects as go
 import plotly.graph_objects as go
 import time
-import tkinter as tk
-from tkinter import filedialog
+
 
 # --- MODULE IMPORTS ---
 from lcp.core.geometry import PanelGeometry
@@ -73,18 +72,8 @@ with st.sidebar.expander("Simulation Management", expanded=False):
             st.session_state["storage_path"] = new_path
             
     with col_path_btn:
-        if st.button("📂"):
-             try:
-                root = tk.Tk()
-                root.withdraw()
-                root.wm_attributes('-topmost', 1)
-                folder_selected = filedialog.askdirectory(initialdir=st.session_state["storage_path"])
-                root.destroy()
-                if folder_selected:
-                    st.session_state["storage_path"] = folder_selected
-                    st.rerun() # Refresh to show text update
-             except Exception as e:
-                st.error(f"Error opening dialog: {e}")
+    with col_path_btn:
+        st.caption("Local Only")
 
     # Init Manager with current path
     pm = PersistenceManager(base_path=st.session_state["storage_path"])
