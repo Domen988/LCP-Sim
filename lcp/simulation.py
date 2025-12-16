@@ -40,31 +40,78 @@ class SimulationRunner:
                 # Ensure values allow for correct spline (float)
                 y = values.astype(float)
                 self.splines[i] = CubicSpline(hours, y, bc_type='clamped')
-                
+        
+        # Pre-calc anchor days (15th of each month)
+        # Non-leap year 2025
+        self.anchor_days = []
+        for m in range(1, 13):
+            self.anchor_days.append(datetime(2025, m, 15).timetuple().tm_yday)
+            
         return df
 
     def get_dni(self, dt: datetime, data: pd.DataFrame = None) -> float:
         """
-        Interpolates DNI using Cubic Spline.
+        Interpolates DNI using Cubic Spline, smoothing day-to-day between months.
+        Assumes monthly data corresponds to the 15th of each month.
         """
-        m_idx = dt.month - 1
+        # Ensure splines are loaded
+        if not self.splines:
+             # Just fallback or error, but assuming loaded
+             return 0.0
+
+        doy = dt.timetuple().tm_yday
+        h = dt.hour + dt.minute / 60.0 + dt.second / 3600.0
         
-        if m_idx in self.splines:
-            # Fractional Hour
-            h = dt.hour + dt.minute / 60.0 + dt.second / 3600.0
-            val = self.splines[m_idx](h)
-            return max(0.0, float(val))
+        # Find anchors
+        # Safe defaults
+        prev_idx = -1
+        next_idx = -1
+        alpha = 0.0
+        
+        # Edge Case: Before Jan 15 -> Interpolate Dec to Jan
+        if doy < self.anchor_days[0]:
+            prev_idx = 11 # Dec
+            next_idx = 0  # Jan
+            # Dec 15 is roughly day -16 relative to Jan 1
+            # Distance from Dec 15 to Jan 15 is approx 31 days
+            # alpha = (doy + (365 - self.anchor_days[11])) / (self.anchor_days[0] + (365 - self.anchor_days[11]))
+            # Easier:
+            # Span = (365 - 349) + 15 = 16 + 15 = 31 days
+            # Progress = (365 - 349) + doy = 16 + doy
+            span = (365 - self.anchor_days[11]) + self.anchor_days[0]
+            progress = (365 - self.anchor_days[11]) + doy
+            alpha = progress / span
             
-        # Fallback (Legacy)
-        if data is not None:
-             month_names = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", 
-                       "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
-             col = month_names[m_idx]
-             try:
-                return float(data.iloc[dt.hour][col])
-             except:
-                return 0.0
-        return 0.0
+        # Edge Case: After Dec 15 -> Interpolate Dec to Jan
+        elif doy >= self.anchor_days[-1]:
+            prev_idx = 11 # Dec
+            next_idx = 0  # Jan
+            # Span same as above (31 days)
+            # Progress = doy - 349
+            span = (365 - self.anchor_days[11]) + self.anchor_days[0]
+            progress = doy - self.anchor_days[11]
+            alpha = progress / span
+            
+        else:
+            # Normal Case: Between two months
+            for i in range(len(self.anchor_days) - 1):
+                if self.anchor_days[i] <= doy < self.anchor_days[i+1]:
+                    prev_idx = i
+                    next_idx = i + 1
+                    span = self.anchor_days[i+1] - self.anchor_days[i]
+                    progress = doy - self.anchor_days[i]
+                    alpha = progress / span
+                    break
+        
+        # Evaluate Splines
+        val_prev = max(0.0, float(self.splines[prev_idx](h)))
+        val_next = max(0.0, float(self.splines[next_idx](h)))
+        
+        # Weighted Average
+        # if alpha 0 -> prev, alpha 1 -> next
+        val = (1.0 - alpha) * val_prev + alpha * val_next
+        
+        return val
 
     def run_year(self) -> pd.DataFrame:
         """
@@ -104,6 +151,22 @@ class SimulationRunner:
             sun = self.solar.get_position(dt)
             local_az = sun.azimuth - PLANT_ROTATION
             
+            # NIGHT OPTIMIZATION
+            if sun.elevation <= 0:
+                 results.append({
+                    "Timestamp": dt,
+                    "Sun_Az": sun.azimuth,
+                    "Sun_El": sun.elevation,
+                    "Local_Az": local_az,
+                    "DNI": 0.0,
+                    "Safety_Mode": True, # Safe
+                    "Theo_Power": 0.0,
+                    "Actual_Power": 0.0,
+                    "Stow_Loss": 0.0,
+                    "Shadow_Loss": 0.0
+                })
+                 continue
+
             states, safety_triggered = self.kernel.solve_timestep(local_az, sun.elevation)
             
             # 2. Power Check
@@ -122,15 +185,30 @@ class SimulationRunner:
             
             # Scale to Whole Plant
             # Extrapolate from 9-panel kernel
-            # Avg per panel
             n_kernel = 9.0
             total_panels = self.cfg.total_panels
+            panel_area = self.geo.width * self.geo.length
             
-            p_theo_plant = (self.geo.width * self.geo.length * total_panels) * dni
+            # Aggregate Kernel Metrics
+            k_act_sum = 0.0
+            k_stow_sum = 0.0
+            k_shad_sum = 0.0
             
-            p_act_plant = (actual_p / n_kernel) * total_panels
-            p_stow_plant = (stow_loss_p / n_kernel) * total_panels
-            p_shad_plant = (shad_loss_p / n_kernel) * total_panels
+            for s in states:
+                k_act_sum += s.power_factor
+                k_stow_sum += s.stow_loss
+                # Weight shadow loss by cosine factor for energy realism
+                cos_theta = 1.0 - s.theta_loss
+                k_shad_sum += (s.shadow_loss * cos_theta)
+
+            p_theo_plant = (panel_area * total_panels) * dni
+            
+            # Theoretical Kernel Power (if all 9 panels were perfect 1.0)
+            # But we want to scale checking the "average per panel" in kernel.
+            
+            p_act_plant = (k_act_sum / n_kernel) * p_theo_plant
+            p_stow_plant = (k_stow_sum / n_kernel) * p_theo_plant
+            p_shad_plant = (k_shad_sum / n_kernel) * p_theo_plant
             
             # Store Row
             res = {

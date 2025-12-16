@@ -165,110 +165,154 @@ class PlantVisualizer:
         out_x, out_y, out_z = [], [], []
         # Removed shad_x lists (Shadow visualization disabled)
         
-        # --- LOOP STATES ---
-        for s_idx, s in enumerate(states):
-            # 1. Colors (From Theme)
-            c_glass = Theme.PANEL_GLASS
-            if show_clash_emphasis:
-                if s.mode == "STOW": c_glass = Theme.ERROR
-                if s.collision and s.mode == "TRACKING": c_glass = Theme.WARNING
+        # --- VECTORIZED IMPLEMENTATION ---
+        
+        n_panels = len(states)
+        if n_panels == 0:
+            return []
+
+        # 1. State Arrays
+        pos_arr = np.array([s.position for s in states]) # (N, 3)
+        rot_arr = np.array([s.rotation for s in states]) # (N, 3, 3)
+        
+        # Colors
+        c_glass_list = []
+        for s in states:
+             c = Theme.PANEL_GLASS
+             if show_clash_emphasis:
+                 if s.mode == "STOW": c = Theme.ERROR
+                 if s.collision and s.mode == "TRACKING": c = Theme.WARNING
+             c_glass_list.append(c)
+        
+        # 2. Geometry Template (8 vertices)
+        dx, dy, dz = w/2.0, l/2.0, t/2.0
+        
+        corners_local = np.array([
+            [-dx, -dy, oz-dz], [dx, -dy, oz-dz], [dx, dy, oz-dz], [-dx, dy, oz-dz], 
+            [-dx, -dy, oz+dz], [dx, -dy, oz+dz], [dx, dy, oz+dz], [-dx, dy, oz+dz]
+        ]) # (8, 3)
+        
+        # 3. Batch Transform
+        # Global = Rot @ Local.T + Pos
+        # numpy matmul broadcasts: (N, 3, 3) @ (3, 8) -> (N, 3, 8)
+        
+        transformed = (rot_arr @ corners_local.T).transpose(0, 2, 1) + pos_arr[:, np.newaxis, :]
+        # transformed shape: (N, 8, 3)
+        
+        # Flatten for Mesh3d
+        all_verts = transformed.reshape(-1, 3)
+        p_x = all_verts[:, 0]
+        p_y = all_verts[:, 1]
+        p_z = all_verts[:, 2]
+        
+        # 4. Indices
+        # Box topology (12 triangles)
+        # Vertices 0-7 per panel
+        base_i = np.array([4, 4,  0, 0,  0, 0,  1, 1,  2, 2,  3, 3])
+        base_j = np.array([5, 6,  2, 3,  1, 5,  2, 6,  3, 7,  0, 4])
+        base_k = np.array([6, 7,  1, 2,  5, 4,  6, 5,  7, 6,  4, 7])
+        
+        # Offset per panel: 0, 8, 16...
+        panel_offsets = np.arange(n_panels) * 8
+        # (N, 12) + (N, 1) -> (N, 12)
+        
+        all_i = (base_i[np.newaxis, :] + panel_offsets[:, np.newaxis]).flatten()
+        all_j = (base_j[np.newaxis, :] + panel_offsets[:, np.newaxis]).flatten()
+        all_k = (base_k[np.newaxis, :] + panel_offsets[:, np.newaxis]).flatten()
+        
+        # 5. Colors (Facecolor)
+        c_side = Theme.PANEL_FRAME
+        
+        # Construct color array
+        # (N, 12)
+        face_colors = []
+        for c in c_glass_list:
+            # 2 glass, 10 side
+            face_colors.extend([c]*2 + [c_side]*10)
             
-            c_side = Theme.PANEL_FRAME
+        p_facecolor = face_colors
+        
+        # --- EDGES (Top Edge 4-5) ---
+        # (N, 2, 3) -> indices 4 and 5 from transformed
+        p4 = transformed[:, 4, :] # (N, 3)
+        p5 = transformed[:, 5, :] # (N, 3)
+        
+        # Stack for plotting safely [x1, x2, None...]
+        nan_arr = np.full((n_panels, 1), None)
+        
+        e_x = np.column_stack((p4[:,0], p5[:,0], nan_arr)).flatten()
+        e_y = np.column_stack((p4[:,1], p5[:,1], nan_arr)).flatten()
+        e_z = np.column_stack((p4[:,2], p5[:,2], nan_arr)).flatten()
+        
+        # --- PIVOTS ---
+        if show_pivots:
+            # (N, 1, 3) + (1, 12, 3) -> (N, 12, 3)
+            piv_transformed = pos_arr[:, np.newaxis, :] + ico_verts[np.newaxis, :, :]
+            piv_flat = piv_transformed.reshape(-1, 3)
+            pv_x = piv_flat[:, 0]
+            pv_y = piv_flat[:, 1]
+            pv_z = piv_flat[:, 2]
             
-            # 2. Panel Geometry
-            dx, dy, dz = w/2.0, l/2.0, t/2.0
-            corners_loc = np.array([
-                [-dx, -dy, oz-dz], [dx, -dy, oz-dz], [dx, dy, oz-dz], [-dx, dy, oz-dz], 
-                [-dx, -dy, oz+dz], [dx, -dy, oz+dz], [dx, dy, oz+dz], [-dx, dy, oz+dz]
-            ])
-            gl_corn = (s.rotation @ corners_loc.T).T + s.position
+            piv_offsets = np.arange(n_panels) * 12
+            base_ico_i = np.array(ico_i)
+            base_ico_j = np.array(ico_j)
+            base_ico_k = np.array(ico_k)
             
-            p_x.extend(gl_corn[:,0])
-            p_y.extend(gl_corn[:,1])
-            p_z.extend(gl_corn[:,2])
+            pv_i = (base_ico_i[np.newaxis, :] + piv_offsets[:, np.newaxis]).flatten()
+            pv_j = (base_ico_j[np.newaxis, :] + piv_offsets[:, np.newaxis]).flatten()
+            pv_k = (base_ico_k[np.newaxis, :] + piv_offsets[:, np.newaxis]).flatten()
             
-            # Panel Indices
-            curr_i = [4, 4,  0, 0,  0, 0,  1, 1,  2, 2,  3, 3]
-            curr_j = [5, 6,  2, 3,  1, 5,  2, 6,  3, 7,  0, 4]
-            curr_k = [6, 7,  1, 2,  5, 4,  6, 5,  7, 6,  4, 7]
-            
-            p_i.extend([x + p_vert_count for x in curr_i])
-            p_j.extend([x + p_vert_count for x in curr_j])
-            p_k.extend([x + p_vert_count for x in curr_k])
-            
-            p_facecolor.extend([c_glass]*2 + [c_side]*10)
-            p_vert_count += 8
-            
-            # 3. Top Edge (User requested swap, using indices 4 and 5)
-            p4, p5 = gl_corn[4], gl_corn[5]
-            e_x.extend([p4[0], p5[0], None])
-            e_y.extend([p4[1], p5[1], None])
-            e_z.extend([p4[2], p5[2], None])
-            
-            # 4. Pivots (Icosahedron)
-            if show_pivots:
-                pv_gl = ico_verts + s.position
-                
-                pv_x.extend(pv_gl[:,0])
-                pv_y.extend(pv_gl[:,1])
-                pv_z.extend(pv_gl[:,2])
-                
-                pv_i.extend([x + pv_vert_count for x in ico_i])
-                pv_j.extend([x + pv_vert_count for x in ico_j])
-                pv_k.extend([x + pv_vert_count for x in ico_k])
-                
-                pv_vert_count += 12
-            
-            # 5. Exact Shadow Polygons
+        else:
+            pv_x, pv_y, pv_z = [], [], []
+            pv_i, pv_j, pv_k = [], [], []
+        
+        # --- SHADOWS & RAYS (Existing Loop logic preserved for shadows) ---
+        # Shadows (Mesh)
+        sh_x, sh_y, sh_z = [], [], []
+        sh_i, sh_j, sh_k = [], [], []
+        sh_vert_count = 0
+        
+        in_x, in_y, in_z = [], [], []
+        out_x, out_y, out_z = [], [], []
+        
+        for s in states:
+            # Exact Shadow Polygons
             if s.shadow_polys:
-                # Calculate offset to glass surface
-                # Pivot Frame -> Geom Center (Pivot Offset) -> Top Surface (Thickness/2)
-                # Ensure we push slightly +0.005 to avoid z-fight with glass
                 shift_vec = s.rotation @ (np.array(self.geo.pivot_offset) + np.array([0, 0, t/2.0 + 0.005]))
-                
                 for poly in s.shadow_polys:
                     if len(poly) < 3: continue
-                    
                     shifted = poly + shift_vec
-                    
-                    # Vertices
                     start_idx = sh_vert_count
                     sh_x.extend(shifted[:,0])
                     sh_y.extend(shifted[:,1])
                     sh_z.extend(shifted[:,2])
-                    
                     n_v = len(shifted)
-                    # Simple Fan Triangulation (Converions ok for convex-ish)
                     for k in range(1, n_v - 1):
                         sh_i.append(start_idx)
                         sh_j.append(start_idx + k)
                         sh_k.append(start_idx + k + 1)
-                    
                     sh_vert_count += n_v
 
-            # 6. Rays (No Intersection Check)
             if show_rays:
                 xs = np.linspace(-w*0.4, w*0.4, 3)
                 ys = np.linspace(-l*0.4, l*0.4, 3)
-                
-                r_locs = []
-                for lx in xs:
-                    for ly in ys:
-                        r_locs.append([lx + ox, ly + oy, z_face + oz])
-                r_locs = np.array(r_locs)
+                r_locs = np.array([[lx + ox, ly + oy, z_face + oz] for lx in xs for ly in ys])
                 
                 r_glob = (s.rotation @ r_locs.T).T + s.position
                 r_sun = r_glob + (sun_vec * ray_len)
                 r_gnd = r_glob - (sun_vec * ray_len)
                 
+                # Manual extend is fine for debug rays
                 for ii in range(len(r_glob)):
                     in_x.extend([r_sun[ii,0], r_glob[ii,0], None])
                     in_y.extend([r_sun[ii,1], r_glob[ii,1], None])
                     in_z.extend([r_sun[ii,2], r_glob[ii,2], None])
-                    
                     out_x.extend([r_glob[ii,0], r_gnd[ii,0], None])
                     out_y.extend([r_glob[ii,1], r_gnd[ii,1], None])
                     out_z.extend([r_glob[ii,2], r_gnd[ii,2], None])
+
+        # Assign back to variables used in TRACES section
+        p_i, p_j, p_k = all_i, all_j, all_k
  
         # --- TRACES ---
         
@@ -288,10 +332,10 @@ class PlantVisualizer:
         
         data.append(go.Scatter3d(
             x=e_x, y=e_y, z=e_z, mode='lines', 
-            line=dict(color='black', width=5), showlegend=False, hoverinfo='skip'
+            line=dict(color=Theme.PANEL_EDGE_TOP, width=5), showlegend=False, hoverinfo='skip'
         ))
         
-        if show_pivots and pv_x:
+        if show_pivots and len(pv_x) > 0:
             data.append(go.Mesh3d(
                 x=pv_x, y=pv_y, z=pv_z, i=pv_i, j=pv_j, k=pv_k,
                 color=Theme.PIVOT, opacity=1.0, flatshading=True,

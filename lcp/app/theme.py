@@ -24,8 +24,9 @@ class Theme:
     PIVOT = "#B0BEC5" # Metallic Grey
     GROUND = "#1E1E1E"
     NORTH_ARROW = "#FF1744"
-    SHADOW = "black"
-    THEORETICAL_LINE = "#E0E0E0"
+    SHADOW = "darkgrey"
+    PANEL_EDGE_TOP = PRIMARY
+    THEORETICAL_LINE = "grey"
     
     # Text
     TEXT_MAIN = "#FAFAFA"

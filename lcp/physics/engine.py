@@ -36,6 +36,34 @@ class InfiniteKernel:
         self.collider = CollisionDetector(geo, cfg)
         self.shadower = ShadowEngine(geo)
         
+        # Pre-compute neighbor offsets for optimization
+        self.neighbor_offsets = []
+        px = cfg.grid_pitch_x
+        py = cfg.grid_pitch_y
+        radius = 1
+        
+        # We pre-calculate offsets for all possible 9 positions (r,c)
+        # Actually, the logic depends on (r,c) to know which neighbors exist (e.g. edge vs interior).
+        # We can store a lookup table: (r,c) -> list of offsets (np.array)
+        
+        self.neighbor_map = {}
+        
+        for r in range(3):
+            for c in range(3):
+                # Logic from _get_virtual_neighbors
+                dr_min = 0 if r == 0 else -radius
+                dr_max = 0 if r == 2 else radius
+                dc_min = 0 if c == 0 else -radius
+                dc_max = 0 if c == 2 else radius
+                
+                offsets = []
+                for dr in range(dr_min, dr_max + 1):
+                    for dc in range(dc_min, dc_max + 1):
+                        if dr == 0 and dc == 0: continue
+                        off = np.array([float(dc * px), float(dr * py), 0.0])
+                        offsets.append(off)
+                self.neighbor_map[(r,c)] = offsets
+
         # Initialize pivot positions
         self.pivots: Dict[Tuple[int,int], np.ndarray] = {}
         for r in range(3):
@@ -45,40 +73,11 @@ class InfiniteKernel:
                 self.pivots[(r,c)] = np.array([float(x), float(y), 0.0])
 
     def _get_virtual_neighbors(self, r, c, current_pos, current_rot):
-        neighbors = []
-        # Expand kernel to capture long shadows
-        # Radius 1 (Immediate Neighbors) for Performance (Speedup ~3x over Radius 2)
-        
-        radius = 1
-        
-        # r=0 (South Edge) -> dr >= 0
-        # r=1 (Interior) -> dr in -radius..radius
-        # r=2 (North Edge) -> dr <= 0
-        dr_min = 0 if r == 0 else -radius
-        dr_max = 0 if r == 2 else radius
-        
-        # c=0 (Left Edge) -> dc >= 0
-        # c=1 (Center) -> dc in -radius..radius
-        # c=2 (Right Edge) -> dc <= 0
-        dc_min = 0 if c == 0 else -radius
-        dc_max = 0 if c == 2 else radius
-        
-        px = self.cfg.grid_pitch_x
-        py = self.cfg.grid_pitch_y
-        
-        for dr in range(dr_min, dr_max + 1):
-            for dc in range(dc_min, dc_max + 1):
-                if dr == 0 and dc == 0: continue
-                
-                # Coordinate: Neighbor relative to Current
-                # dx = dc * px
-                # dy = dr * py
-                offset = np.array([float(dc * px), float(dr * py), 0.0])
-                n_pos = current_pos + offset
-                
-                neighbors.append((n_pos, current_rot))
-        
-        return neighbors
+        # Optimized lookup
+        # returns list of (pos, rot)
+        offsets = self.neighbor_map[(r,c)]
+        # Broadcasting would be faster but loop is small (max 8)
+        return [(current_pos + off, current_rot) for off in offsets]
 
     def solve_timestep(self, sun_az: float, sun_el: float, enable_safety: bool = True) -> Tuple[List[PanelState], bool]:
         """

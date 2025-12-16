@@ -11,7 +11,10 @@ import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta, date
 import plotly.graph_objects as go
+import plotly.graph_objects as go
 import time
+import tkinter as tk
+from tkinter import filedialog
 
 # --- MODULE IMPORTS ---
 from lcp.core.geometry import PanelGeometry
@@ -19,7 +22,9 @@ from lcp.core.config import ScenarioConfig
 from lcp.simulation import SimulationRunner
 from lcp.physics.engine import InfiniteKernel, PanelState
 from lcp.app.visualizer import PlantVisualizer
+from lcp.app.visualizer import PlantVisualizer
 from lcp.app.theme import Theme
+from lcp.core.persistence import PersistenceManager
 
 PLANT_ROTATION = 5.0
 
@@ -53,16 +58,86 @@ st.sidebar.title("LCP Control Room")
 view_mode = st.sidebar.radio("View", ["Simulation Results", "3D Analysis"], index=1)
 st.sidebar.markdown("---")
 
+# Persistence Section
+with st.sidebar.expander("Simulation Management", expanded=False):
+    # Initialize Storage Path
+    if "storage_path" not in st.session_state:
+        st.session_state["storage_path"] = os.path.join(os.getcwd(), "saved_simulations")
+        
+    # UI for Path
+    col_path_text, col_path_btn = st.columns([3, 1])
+    with col_path_text:
+        # Allow manual edit, update state
+        new_path = st.text_input("Storage Path", st.session_state["storage_path"], label_visibility="collapsed")
+        if new_path != st.session_state["storage_path"]:
+            st.session_state["storage_path"] = new_path
+            
+    with col_path_btn:
+        if st.button("📂"):
+             try:
+                root = tk.Tk()
+                root.withdraw()
+                root.wm_attributes('-topmost', 1)
+                folder_selected = filedialog.askdirectory(initialdir=st.session_state["storage_path"])
+                root.destroy()
+                if folder_selected:
+                    st.session_state["storage_path"] = folder_selected
+                    st.rerun() # Refresh to show text update
+             except Exception as e:
+                st.error(f"Error opening dialog: {e}")
+
+    # Init Manager with current path
+    pm = PersistenceManager(base_path=st.session_state["storage_path"])
+    
+    # Save
+    st.markdown("**Save Current Run**")
+    save_name = st.text_input("Name", "New_Sim")
+    if st.button("Save"):
+        if st.session_state.get("simulation_results"):
+             # We need to extract Geo/Cfg from the first result
+             # All days share same config in current logic
+             # Or we reconstruct from current UI state?
+             # Better to take from results to match what was run.
+             res_0 = st.session_state["simulation_results"][0]
+             pm.save_simulation(save_name, res_0['geo'], res_0['cfg'], st.session_state["simulation_results"])
+             st.success(f"Saved: {save_name}")
+        else:
+             st.error("No results to save.")
+             
+    st.divider()
+    
+    # Load
+    st.markdown("**Load Saved Run**")
+    sims = pm.list_simulations()
+    if sims:
+        load_name = st.selectbox("Select Simulation", sims)
+        if st.button("Load"):
+            with st.spinner("Loading..."):
+                try:
+                    l_geo, l_cfg, l_res = pm.load_simulation(load_name)
+                    st.session_state["simulation_results"] = l_res
+                    # Optional: We could update UI inputs (sliders) here to match l_cfg/l_geo
+                    # But Streamlit widgets are tricky to update from inside code without rerun.
+                    # For now, just loading results.
+                    st.success(f"Loaded: {load_name}")
+                    st.session_state["run_trigger"] = False # Ensure we don't auto-run
+                except Exception as e:
+                    st.error(f"Error: {e}")
+    else:
+        st.info("No saved simulations found.")
+
+st.sidebar.markdown("---")
+
 # Geometry Config
 with st.sidebar.expander("Geometry Config", expanded=False):
-    panel_width = st.number_input("Panel Width (m)", 0.5, 5.0, 1.0, 0.1)
-    panel_length = st.number_input("Panel Length (m)", 0.5, 5.0, 1.0, 0.1)
-    pivot_depth = st.number_input("Pivot Depth from Glass (m)", 0.0, 0.5, 0.05, 0.01)
+    panel_width = st.number_input("Panel Width (m)", 0.5, 5.0, 1.46, 0.1)
+    panel_length = st.number_input("Panel Length (m)", 0.5, 5.0, 1.46, 0.1)
+    pivot_depth = st.number_input("Pivot Depth from Glass (m)", 0.0, 0.5, 0.38, 0.01)
 
     # Use number_input for pitch to return float directly
-    pitch_x = st.number_input("Pitch X (m)", 0.5, 10.0, 1.05, 0.01)
-    pitch_y = st.number_input("Pitch Y (m)", 0.5, 10.0, 1.05, 0.01)
-    tolerance = st.number_input("Clash Tolerance (m)", 0.0, 0.5, 0.02, 0.01)
+    pitch_x = st.number_input("Pitch X (m)", 0.5, 10.0, 1.7, 0.01)
+    pitch_y = st.number_input("Pitch Y (m)", 0.5, 10.0, 1.7, 0.01)
+    tolerance = st.number_input("Clash Tolerance (m)", 0.0, 0.5, 0.03, 0.01)
 
 # Plant Size
 with st.sidebar.expander("Plant Sizing", expanded=False):
@@ -243,6 +318,9 @@ if st.session_state.get("run_trigger", False):
         
         PLANT_ROTATION = 5.0 # Constant definition
         
+        # Force Data Load to ensure Splines are ready
+        runner.load_data()
+        
         for d in range(sim_days):
             current_day_date = start_date + timedelta(days=d)
             start_dt = datetime.combine(current_day_date, datetime.min.time())
@@ -265,11 +343,31 @@ if st.session_state.get("run_trigger", False):
                 
                 # A. Physics
                 sun = runner.solar.get_position(dt)
+                
+                # NIGHT OPTIMIZATION: Skip simulation if sun is below horizon
+                if sun.elevation <= 0:
+                    # Add zero-power frame
+                    day_frames.append({
+                        "time": dt,
+                        "sun_az": sun.azimuth,
+                        "sun_el": sun.elevation,
+                        "safety": True, # Safe by default
+                        "act_w": 0.0,
+                        "theo_w": 0.0,
+                        "states": [] # No states
+                    })
+                    continue
+
                 local_az = sun.azimuth - PLANT_ROTATION
                 
                 # B. Solve State
                 states, safety = runner.kernel.solve_timestep(local_az, sun.elevation, enable_safety=True)
                 dni = runner.get_dni(dt, data_matrix)
+                
+                # DEBUG: Check Noon values
+                if dt.hour == 12 and dt.minute == 0:
+                     print(f"DEBUG: {dt} | El: {sun.elevation:.2f} | DNI: {dni:.2f} | Splines: {len(runner.splines)}")
+
                 
                 # C. Calculate Power (Weighted Whole Plant)
                 panel_area = geo.width * geo.length
@@ -394,9 +492,10 @@ if view_mode == "Simulation Results":
             a = s['act_kwh']
             rows.append({
                 "Date": s['date'].strftime("%Y-%m-%d"),
-                "Theo [kWh]": f"{t:.1f}",
-                "Act [%]": f"{(a/t)*100:.1f}" if t > 0 else "0",
-                "Stow [%]": f"{(s['stow_loss_kwh']/t)*100:.1f}" if t > 0 else "0"
+                "Theoretical power": f"{t:.1f}",
+                "Plant efficiency": f"{(a/t)*100:.1f}" if t > 0 else "0",
+                "Stow loss %": f"{(s['stow_loss_kwh']/t)*100:.1f}" if t > 0 else "0",
+                "Shadowing loss %": f"{(s['shad_loss_kwh']/t)*100:.1f}" if t > 0 else "0"
             })
         
         df_table = pd.DataFrame(rows)
@@ -413,26 +512,68 @@ if view_mode == "Simulation Results":
         y_dates = []
         x_times = None 
         
-        for day in results:
-            # Filter frames for 05:00 to 20:00 (Inclusive of hour 20)
-            valid_frames = [f for f in day['frames'] if 5 <= f['time'].hour <= 20]
-            
-            # Extract Power
-            row = [f['act_w']/1000.0 for f in valid_frames]
-            z_data.append(row)
-            y_dates.append(day['summary']['date'].strftime("%Y-%m-%d"))
-            
-            if x_times is None and valid_frames:
-                x_times = [f['time'].strftime("%H:%M") for f in valid_frames]
+        # Prepare Data Matrix (X=Time, Y=Day, Z=Power)
+        # Robust Logic to handle potential jagged data (e.g. from old saved runs or re-sim discrepancies)
+        z_data = []
+        y_dates = []
+        x_times = None 
+        
+        # 1. First Pass: Find Reference Timeline (Day with most valid frames)
+        max_valid = 0
+        ref_day_idx = -1
+        
+        for i, day in enumerate(results):
+             valid_count = len([f for f in day['frames'] if 5 <= f['time'].hour <= 20])
+             if valid_count > max_valid:
+                 max_valid = valid_count
+                 ref_day_idx = i
+        
+        if ref_day_idx != -1:
+             ref_frames = [f for f in results[ref_day_idx]['frames'] if 5 <= f['time'].hour <= 20]
+             x_times = [f['time'].strftime("%H:%M") for f in ref_frames]
+        
+        if x_times:
+            # 2. Second Pass: Build Matrix Aligned to x_times
+            for day in results:
+                y_dates.append(day['summary']['date'].strftime("%Y-%m-%d"))
+                
+                # Filter frames for 05:00 to 20:00
+                valid_frames = [f for f in day['frames'] if 5 <= f['time'].hour <= 20]
+                
+                if not valid_frames:
+                    # Empty day -> Fill with 0
+                    z_data.append([0.0] * len(x_times))
+                    continue
+                    
+                # Extract Data
+                curr_times = [f['time'].strftime("%H:%M") for f in valid_frames]
+                curr_vals = [f['act_w']/1000.0 for f in valid_frames]
+                
+                if len(curr_times) == len(x_times):
+                    # Optimized happy path (lengths match)
+                    # We assume strict alignment if lengths match (standard for current sim)
+                    z_data.append(curr_vals)
+                else:
+                    # Jagged / Mismatch -> Align by time string
+                    val_map = dict(zip(curr_times, curr_vals))
+                    aligned_row = [val_map.get(t, 0.0) for t in x_times]
+                    z_data.append(aligned_row)
         
         if z_data and x_times:
+            # Placeholder for chart
+            ph_surf = st.empty()
+            
+            # Control below chart
+            show_theoretical = st.checkbox("Show theoretical power maximum", value=True)
+            
             fig_surf = go.Figure()
             
+            # 1. Surface (Actual)
             # 1. Surface (Actual)
             fig_surf.add_trace(go.Surface(
                 z=z_data, x=x_times, y=y_dates,
                 colorscale='Viridis', 
-                colorbar=dict(title="Plant Power (kW)", len=0.6, y=0.5)
+                showscale=False
             ))
             
             # 2. Theoretical Lines (Wireframe)
@@ -459,7 +600,7 @@ if view_mode == "Simulation Results":
                     wf_y.append(None)
                     wf_z.append(None)
 
-            if wf_x:
+            if wf_x and show_theoretical:
                 fig_surf.add_trace(go.Scatter3d(
                     x=wf_x, y=wf_y, z=wf_z,
                     mode='lines', name='Theoretical',
@@ -468,7 +609,7 @@ if view_mode == "Simulation Results":
                 ))
             
             fig_surf.update_layout(
-                title=None,
+                title_text="",
                 scene=dict(
                     xaxis=dict(title="Time"),
                     yaxis=dict(title="Date"),
@@ -481,9 +622,9 @@ if view_mode == "Simulation Results":
                 ),
                 margin=dict(l=0, r=0, b=0, t=20),
                 height=500,
-                legend=dict(x=0, y=1)
+                showlegend=False
             )
-            st.plotly_chart(fig_surf, use_container_width=True)
+            ph_surf.plotly_chart(fig_surf, use_container_width=True)
         else:
             st.warning("Insufficient data to generate Surface Plot.")
 
@@ -542,6 +683,86 @@ elif view_mode == "3D Analysis":
     day_data = results[sel_idx_3d]
     geo_used = day_data['geo']
     cfg_used = day_data['cfg']
+    
+    # HYBRID LOADING: Check if detailed frames exist
+    # If frames are missing (old load) OR exist but have no states (new hybrid load), re-simulate.
+    should_resimulate = False
+    if not day_data.get('frames'):
+        should_resimulate = True
+    elif not day_data['frames'][0].get('states'):
+        should_resimulate = True
+        
+    if should_resimulate:
+
+
+        # Re-init runner with saved config
+        runner = get_sim_runner_infinite()
+        
+        # Setup Kernel
+        runner.kernel.geo = geo_used
+        runner.kernel.cfg = cfg_used
+        runner.kernel.collider.geo = geo_used
+        runner.kernel.collider.cfg = cfg_used
+        runner.kernel.pivots = {}
+        for r in range(3):
+            for c in range(3):
+                # Standard grid generation (Need to use Cfg pitch)
+                y = (r - 1) * cfg_used.grid_pitch_y
+                x = (c - 1) * cfg_used.grid_pitch_x
+                runner.kernel.pivots[(r,c)] = np.array([float(x), float(y), 0.0])
+                
+        # Run Re-simulation
+        new_frames = []
+        PLANT_ROTATION = 5.0
+        
+        # CASE A: Augment existing lightweight frames (Hybrid Load - Preserves Metrics)
+        if day_data.get('frames'):
+             for f in day_data['frames']:
+                  # Night Optimization
+                  if f['sun_el'] <= 0:
+                       f_new = f.copy()
+                       f_new['states'] = []
+                       new_frames.append(f_new)
+                       continue
+                  
+                  # Simulate
+                  # We need local_az for kernel
+                  # f['sun_az'] is loaded. 
+                  local_az = f['sun_az'] - PLANT_ROTATION
+                  states, safety = runner.kernel.solve_timestep(local_az, f['sun_el'], enable_safety=True)
+                  
+                  f_new = f.copy()
+                  f_new['states'] = states
+                  new_frames.append(f_new)
+
+        # CASE B: Generate from scratch (Missing Data - Fallback)
+        else:
+            target_date = day_data['summary']['date']
+            dt_start = datetime.combine(target_date, datetime.min.time())
+            # 6 min steps
+            steps = [dt_start + timedelta(minutes=6*i) for i in range(int(24*60/6))]
+            
+            for dt in steps:
+                sun = runner.solar.get_position(dt)
+                if sun.elevation <= 0:
+                     new_frames.append({
+                        "time": dt, "sun_az": sun.azimuth, "sun_el": sun.elevation,
+                        "safety": True, "act_w": 0.0, "theo_w": 0.0, "states": []
+                    })
+                     continue
+
+                local_az = sun.azimuth - PLANT_ROTATION
+                states, safety = runner.kernel.solve_timestep(local_az, sun.elevation, enable_safety=True)
+                
+                # No Power Calc available in fallback
+                new_frames.append({
+                    "time": dt, "sun_az": sun.azimuth, "sun_el": sun.elevation,
+                    "safety": safety, "act_w": 0.0, "theo_w": 0.0, "states": states 
+                })
+        
+        # Update the in-memory object so we don't re-sim again
+        day_data['frames'] = new_frames
+
     day_frames_light = [f for f in day_data['frames'] if f['sun_el'] > 0]
     
     if not day_frames_light:

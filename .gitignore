@@ -12,3 +12,11 @@ venv.bak/
 .vscode/
 .idea/
 *.log
+
+# Project specific
+saved_simulations/
+repro_*.py
+test_dni_smoothing_output.csv
+verify_*.py
+test_*.py
+benchmark_performance.py
