@@ -9,6 +9,6 @@ class PanelGeometry:
     """
     width: float = 1.46
     length: float = 1.46
-    thickness: float = 0.1
+    thickness: float = 0.15
     # Vector from Pivot Point to Geometric Center of the box (local coords)
     pivot_offset: Tuple[float, float, float] = (0.0, 0.0, -0.38) 

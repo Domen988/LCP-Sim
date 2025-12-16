@@ -121,6 +121,7 @@ with st.sidebar.expander("Geometry Config", expanded=False):
     panel_width = st.number_input("Panel Width (m)", 0.5, 5.0, 1.46, 0.1)
     panel_length = st.number_input("Panel Length (m)", 0.5, 5.0, 1.46, 0.1)
     pivot_depth = st.number_input("Pivot Depth from Glass (m)", 0.0, 0.5, 0.38, 0.01)
+    panel_thickness = st.number_input("Panel Thickness (m)", 0.01, 0.5, 0.15, 0.01)
 
     # Use number_input for pitch to return float directly
     pitch_x = st.number_input("Pitch X (m)", 0.5, 10.0, 1.7, 0.01)
@@ -177,7 +178,7 @@ if "simulation_results" not in st.session_state:
 if st.session_state.get("run_trigger", False):
     with st.spinner("Running Simulation..."):
         # 1. Setup Geometry
-        thickness = 0.05
+        thickness = panel_thickness
         off_z = pivot_depth - (thickness / 2.0) # Pos Z: Glass Above Pivot
         
         geo = PanelGeometry(
