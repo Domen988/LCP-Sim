@@ -72,7 +72,6 @@ with st.sidebar.expander("Simulation Management", expanded=False):
             st.session_state["storage_path"] = new_path
             
     with col_path_btn:
-    with col_path_btn:
         st.caption("Local Only")
 
     # Init Manager with current path
