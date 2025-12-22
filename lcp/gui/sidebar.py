@@ -292,6 +292,7 @@ class Sidebar(QWidget):
         s = self.state.sim_settings
         
         self.de_start = QDateEdit()
+        self.de_start.setCalendarPopup(True)
         self.de_start.setDate(QDate(s.start_date.year, s.start_date.month, s.start_date.day))
         self.de_start.dateChanged.connect(self.on_sim_change)
         form.addRow("Start Date", self.de_start)

@@ -23,7 +23,11 @@ class SimulationWorker(QThread):
         self.state = state
         self.start_date = start_date
         self.days = days
+        self.days = days
         self._is_running = True
+        
+    def stop(self):
+        self._is_running = False
         
     def run(self):
         try:
@@ -85,6 +89,7 @@ class SimulationWorker(QThread):
                 
                 # Iter Frames
                 for i in range(steps_per_day):
+                    if not self._is_running: break
                     dt = start_dt_iter + timedelta(minutes=timestep_min * i)
                     global_step += 1
                     
@@ -116,26 +121,132 @@ class SimulationWorker(QThread):
                     step_shad_w = 0.0
                     
                     
-                    # Simplified Accounting:
-                    # The 9-panel kernel represents the average behavior of the plant.
-                    count_per_state = cfg.total_panels / len(states)
-                    p_one_panel_potential = panel_area * dni # Watts incident if normal to sun
+                    # 2b. Weighted Calculation (Fix for 3x3 Kernel Representation)
+                    # We map the 9 kernel states to the full plant geometry.
                     
-                    for s in states:
-                         # 1. Actual Power
-                         p_act = p_one_panel_potential * s.power_factor
-                         step_act_w += p_act * count_per_state
+                    # Counts based on Plant Size
+                    rows = cfg.total_panels // self.state.cols # Approximate row count if total_panels used directly? Better use state.rows
+                    # Actually cfg doesn't store rows/cols, only total_panels. 
+                    # But we have self.state.rows/cols available in AppState but SimulationRunner is standalone...
+                    # Wait, SimulationWorker has self.state.
+                    
+                    n_rows = self.state.rows 
+                    n_cols = self.state.cols
+                    
+                    # Calculate Panel Counts for each Kernel Position (0..8)
+                    # 0: TL, 1: Top, 2: TR
+                    # 3: L,  4: C,   5: R
+                    # 6: BL, 7: Bot, 8: BR
+                    
+                    counts = [0] * 9
+                    
+                    # 1. Parity Counts for Plant Regions
+                    # Interior
+                    cnt_int_even = 0
+                    cnt_int_odd = 0
+                    # Rows 1..N-2, Cols 1..N-2
+                    # Approximation for speed:
+                    # Half of (Rows-2)*(Cols-2) is Even, Half is Odd.
+                    n_int = max(0, (n_rows - 2) * (n_cols - 2))
+                    cnt_int_even = n_int // 2
+                    cnt_int_odd = n_int - cnt_int_even
+                    
+                    # Edges (Top/Bot/Left/Right) - Simplified 50/50 split
+                    n_top = max(0, n_cols - 2);     cnt_top_e = n_top // 2;     cnt_top_o = n_top - cnt_top_e
+                    n_bot = max(0, n_cols - 2);     cnt_bot_e = n_bot // 2;     cnt_bot_o = n_bot - cnt_bot_e
+                    n_left = max(0, n_rows - 2);    cnt_left_e = n_left // 2;   cnt_left_o = n_left - cnt_left_e
+                    n_right = max(0, n_rows - 2);   cnt_right_e = n_right // 2; cnt_right_o = n_right - cnt_right_e
+                    
+                    # 2. Assign to Kernel Indices
+                    # Kernel Map:
+                    # 0(TL) 1(T) 2(TR)
+                    # 3(L)  4(C) 5(R)
+                    # 6(BL) 7(B) 8(BR)
+                    
+                    # Corners (Always 1)
+                    counts[0] = 1; counts[2] = 1; counts[6] = 1; counts[8] = 1
+                    
+                    # Edges
+                    # Top Row (Index 1): Represents All Top Edge
+                    # But if Index 1 Stows (Parity Odd), we need a proxy for Even.
+                    # Proxy: Index 1 is (0,1) -> Odd. 
+                    # Neighbors: (0,0), (0,2), (1,1). (1,1) is Center.
+                    # We can use Index 4 (Center) as proxy? No, Center is different region.
+                    # In 3x3, we don't have enough edge representatives.
+                    # However, usually Edge panels map to Index 1.
+                    # Strategy: Assign ALL Top to Index 1. 
+                    # UNLESS we are in Checkerboard mode?
+                    # The Dashboard logic was:
+                    # "Even Edges -> Corners (Stowed/Safe)"
+                    # "Odd Edges -> Edges (Tracking)"
+                    # "Even Int -> Center (Stowed)"
+                    # "Odd Int -> Right Edge (Tracking)"
+                    
+                    # Let's verify `dashboard.py` logic:
+                    # w_stow[(0,1)] = cnt_top_odd  (Index 1 gets Odd Top)
+                    # w_stow[(0,0)] += cnt_top_even (Index 0/Corner gets Even Top) -> Corners serve as Stow Proxy
+                    
+                    # Interior:
+                    # w_stow[(1,1)] = cnt_int_even (Index 4 gets Even Int)
+                    # w_stow[(1,2)] += cnt_int_odd (Index 5/Right Edge gets Odd Int) -> Index 5 serves as Track Proxy
+                    
+                    # Only apply this splitting if SAFETY is ON (Checkerboard).
+                    # If Normal Tracking, everything maps to its geometric representative.
+                    
+                    # Determine Mode from States?
+                    # If any state is STOW, we assume Safety Mode/Checkerboard logic is active.
+                    is_safety_mode = any(s.mode == 'STOW' for s in states)
+                    
+                    if is_safety_mode:
+                         # --- SAFETY / STOW WEIGHTS ---
                          
-                         # 2. Stow Loss
-                         # If stowed, s.stow_loss is 1.0 (full loss), otherwise 0.0
-                         step_stow_w += (p_one_panel_potential * s.stow_loss) * count_per_state
+                         # Top (Index 1 is Odd). Even Top -> Index 0.
+                         counts[1] = cnt_top_o
+                         counts[0] += cnt_top_e
                          
-                         # 3. Shadow Loss
-                         # Loss = Potential * CosTheta * ShadowFraction
-                         # s.point_factor already includes CosTheta * (1-Shadow).
-                         # We want the portion lost to shadow.
-                         cos_theta = 1.0 - s.theta_loss
-                         step_shad_w += (p_one_panel_potential * cos_theta * s.shadow_loss) * count_per_state
+                         # Bot (Index 7 is (2,1) Odd). Even Bot -> Index 6 (BL) or 8 (BR)? 
+                         # (2,0) BL is Even. (2,0) is Index 6.
+                         counts[7] = cnt_bot_o
+                         counts[6] += cnt_bot_e
+                         
+                         # Left (Index 3 is (1,0) Odd). Even Left -> Index 0 (TL) (0,0) Even.
+                         counts[3] = cnt_left_o
+                         counts[0] += cnt_left_e
+                         
+                         # Right (Index 5 is (1,2) Odd). Even Right -> Index 2 (TR) (0,2) Even.
+                         counts[5] = cnt_right_o
+                         counts[2] += cnt_right_e
+                         
+                         # Interior (Index 4 is (1,1) Even). Odd Int -> Index 5 (Right Edge) (1,2) Odd.
+                         # Dashboard used (1,2) as proxy for Odd Interior.
+                         counts[4] = cnt_int_even
+                         counts[5] += cnt_int_odd
+                    else:
+                         # --- NORMAL TRACKING WEIGHTS ---
+                         # Geometric mapping
+                         counts[1] += n_top
+                         counts[7] += n_bot
+                         counts[3] += n_left
+                         counts[5] += n_right
+                         counts[4] += n_int
+                    
+                    p_one_panel_potential = panel_area * dni
+                    
+                    for k_idx, s in enumerate(states):
+                         if k_idx >= 9: break 
+                         
+                         count = counts[k_idx]
+                         if count > 0:
+                              # 1. Actual
+                              step_act_w += (p_one_panel_potential * s.power_factor) * count
+                              
+                              # 2. Stow Loss
+                              step_stow_w += (p_one_panel_potential * s.stow_loss) * count
+                              
+                              # 3. Shadow Loss
+                              # s.shadow_loss is fractional loss.
+                              cos_theta = 1.0 - s.theta_loss
+                              step_shad_w += (p_one_panel_potential * cos_theta * s.shadow_loss) * count
                               
                     # Accumulate
                     day_metrics["theo_kwh"] += step_theo_w * (timestep_min/60) / 1000

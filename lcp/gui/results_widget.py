@@ -7,6 +7,7 @@ import numpy as np
 
 # Physics Imports
 from lcp.physics.engine import InfiniteKernel, PanelState
+from lcp.gui.landscape_widget import AnnualLandscapeWidget
 
 class ResultsWidget(QWidget):
     # args: sun_az, sun_el, safety_detected, states_list
@@ -41,6 +42,10 @@ class ResultsWidget(QWidget):
         self.plot_tab = QWidget()
         self.setup_plot_tab()
         self.tabs.addTab(self.plot_tab, "Power Curve")
+        
+        # Tab 3: Annual Landscape
+        self.landscape = AnnualLandscapeWidget()
+        self.tabs.addTab(self.landscape, "Annual Landscape")
         
     def setup_table_tab(self):
         l = QVBoxLayout()
@@ -98,6 +103,9 @@ class ResultsWidget(QWidget):
     def update_results(self, data):
         if not data: return
         self.all_data = data
+        
+        # Update 3D Landscape
+        self.landscape.update_data(data)
         
         # 1. Update Table
         self.table.setRowCount(len(data))
