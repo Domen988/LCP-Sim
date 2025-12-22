@@ -1110,7 +1110,7 @@ elif view_mode == "Stow Recorder":
     # We need current Geo/Cfg.
     # If a simulation was run, use that. Else use Sidebar inputs.
     # Re-construct from sidebar inputs:
-    thickness = 0.05
+    thickness = panel_thickness
     off_z = pivot_depth - (thickness / 2.0)
     
     current_geo = PanelGeometry(

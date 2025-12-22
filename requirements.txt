@@ -5,3 +5,6 @@ plotly
 shapely
 pvlib
 scipy
+PyQt6
+pyqtgraph
+pyopengl

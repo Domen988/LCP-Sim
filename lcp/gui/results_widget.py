@@ -1,0 +1,185 @@
+from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QTabWidget, QTableWidget, 
+                             QTableWidgetItem, QHeaderView, QPushButton, QSlider, QLabel)
+from PyQt6.QtCore import Qt, pyqtSignal, QTimer
+import pyqtgraph as pg
+import pandas as pd
+import numpy as np
+
+class ResultsWidget(QWidget):
+    # args: sun_az, sun_el, safety_detected
+    replay_frame = pyqtSignal(float, float, bool)
+    
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        layout = QVBoxLayout()
+        self.setLayout(layout)
+        
+        self.tabs = QTabWidget()
+        layout.addWidget(self.tabs)
+        
+        # State
+        self.all_data = [] # List of day dicts
+        self.current_frames = [] # Frames for selected day
+        self.replay_idx = 0
+        self.timer = QTimer()
+        self.timer.timeout.connect(self.next_frame)
+        self.timer.setInterval(50) # 20 FPS
+        
+        # Tab 1: Summary Table
+        self.table_tab = QWidget()
+        self.setup_table_tab()
+        self.tabs.addTab(self.table_tab, "Daily Summary")
+        
+        # Tab 2: Hourly Plot
+        self.plot_tab = QWidget()
+        self.setup_plot_tab()
+        self.tabs.addTab(self.plot_tab, "Power Curve")
+        
+        # Tab 3: Monthly Bar (Placeholder)
+        
+    def setup_table_tab(self):
+        l = QVBoxLayout()
+        self.table_tab.setLayout(l)
+        
+        self.table = QTableWidget()
+        self.table.setColumnCount(5)
+        self.table.setHorizontalHeaderLabels(["Date", "Theoretical (MWh)", "Actual (MWh)", "Stow Loss %", "Shadow Loss %"])
+        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self.table.itemSelectionChanged.connect(self.on_day_selected)
+        l.addWidget(self.table)
+        
+    def setup_plot_tab(self):
+        l = QVBoxLayout()
+        self.plot_tab.setLayout(l)
+        
+        self.chart = pg.PlotWidget()
+        self.chart.setBackground('k')
+        self.chart.addLegend()
+        self.chart.showGrid(x=True, y=True)
+        self.chart.setLabel('left', 'Power (MW)')
+        self.chart.setLabel('bottom', 'Time')
+        
+        self.cursor_line = pg.InfiniteLine(angle=90, movable=False, pen=pg.mkPen('y', width=2))
+        self.chart.addItem(self.cursor_line)
+        
+        l.addWidget(self.chart)
+        
+        # Replay Controls
+        controls = QHBoxLayout()
+        
+        self.btn_play = QPushButton("▶ Play")
+        self.btn_play.setCheckable(True)
+        self.btn_play.clicked.connect(self.toggle_play)
+        
+        self.slider = QSlider(Qt.Orientation.Horizontal)
+        self.slider.valueChanged.connect(self.on_slider_change)
+        
+        self.lbl_time = QLabel("--:--")
+        
+        controls.addWidget(self.btn_play)
+        controls.addWidget(self.slider)
+        controls.addWidget(self.lbl_time)
+        
+        l.addLayout(controls)
+        
+    def update_results(self, data):
+        """
+        Data is list of day dicts (as returned by runner)
+        """
+        if not data: return
+        self.all_data = data
+        
+        # 1. Update Table
+        self.table.setRowCount(len(data))
+        for r, day in enumerate(data):
+            summ = day['summary']
+            t_mwh = summ['theo_kwh'] / 1000
+            a_mwh = summ['act_kwh'] / 1000
+            
+            stow_pct = (summ['stow_loss_kwh'] / summ['theo_kwh'] * 100) if t_mwh > 0 else 0
+            shad_pct = (summ['shad_loss_kwh'] / summ['theo_kwh'] * 100) if t_mwh > 0 else 0
+            
+            self.table.setItem(r, 0, QTableWidgetItem(str(summ['date'])))
+            self.table.setItem(r, 1, QTableWidgetItem(f"{t_mwh:.2f}"))
+            self.table.setItem(r, 2, QTableWidgetItem(f"{a_mwh:.2f}"))
+            self.table.setItem(r, 3, QTableWidgetItem(f"{stow_pct:.1f}%"))
+            self.table.setItem(r, 4, QTableWidgetItem(f"{shad_pct:.1f}%"))
+            
+        # Select first day by default
+        self.table.selectRow(0)
+        
+    def on_day_selected(self):
+        rows = self.table.selectionModel().selectedRows()
+        if not rows: return
+        idx = rows[0].row()
+        
+        if idx < len(self.all_data):
+            self.load_day_frames(self.all_data[idx])
+            
+    def load_day_frames(self, day_data):
+        self.current_frames = day_data['frames']
+        if not self.current_frames: return
+        
+        # Setup Slider
+        self.slider.setRange(0, len(self.current_frames) - 1)
+        self.slider.setValue(0)
+        
+        # Plot
+        self.chart.clear()
+        self.chart.addItem(self.cursor_line)
+        
+        x = range(len(self.current_frames))
+        y_act = [f['act_w']/1e6 for f in self.current_frames]
+        
+        # Theoretical Line
+        if 'theo_w' in self.current_frames[0]:
+            y_theo = [f['theo_w']/1e6 for f in self.current_frames]
+            self.chart.plot(x, y_theo, pen=pg.mkPen('c', style=Qt.PenStyle.DashLine), name="Theoretical")
+            
+        # Actual Power
+        self.chart.plot(x, y_act, pen=pg.mkPen('g', width=2), name="Actual Power")
+        
+        # Clashes
+        clash_x = []
+        clash_y = []
+        for i, f in enumerate(self.current_frames):
+             if f['safety']:
+                  clash_x.append(i)
+                  clash_y.append(f['act_w']/1e6)
+                  
+        if clash_x:
+             self.chart.plot(clash_x, clash_y, pen=None, symbol='x', symbolBrush='r', name="Clash")
+
+    def toggle_play(self, checked):
+        if checked:
+            self.btn_play.setText("⏸ Stop")
+            self.timer.start()
+        else:
+            self.btn_play.setText("▶ Play")
+            self.timer.stop()
+            
+    def next_frame(self):
+        val = self.slider.value()
+        if val < self.slider.maximum():
+            self.slider.setValue(val + 1)
+        else:
+            self.toggle_play(False)
+            self.btn_play.setChecked(False)
+            
+    def on_slider_change(self, val):
+        if not self.current_frames or val >= len(self.current_frames): return
+        
+        frame = self.current_frames[val]
+        
+        # Update Cursor
+        self.cursor_line.setValue(val)
+        
+        # Update Label
+        dt = frame['time']
+        az = frame['sun_az']
+        el = frame['sun_el']
+        self.lbl_time.setText(f"{dt.strftime('%H:%M')} | Az: {az:.1f}° El: {el:.1f}°")
+        
+        # Emit Update Signal
+        self.replay_frame.emit(az, el, frame['safety'])

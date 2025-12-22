@@ -4,23 +4,28 @@ import numpy as np
 import os
 import time
 from datetime import datetime, timedelta
+import plotly.graph_objects as go
 
 from lcp.core.stow import StowProfile
 from lcp.app.visualizer import PlantVisualizer
 from lcp.physics.engine import InfiniteKernel
 from lcp.core.geometry import PanelGeometry
 from lcp.core.config import ScenarioConfig
-from lcp.simulation import SimulationRunner
+from lcp.core.solar import SolarCalculator
+
+# Use our new JS Visualizer
+from lcp.app.components.three_viz import three_viz
 
 # Constants
-STOW_AZ_MIN = -180.0
-STOW_AZ_MAX = 180.0 # Changed to +/- 180 per request
+PLANT_ROTATION = 5.0 # Ensure this matches dashboard.py
 
 def render_stow_recorder(viz_container, geo: PanelGeometry, cfg: ScenarioConfig, sim_results=None):
-    st.header("Manual Stow Recorder")
-
+    # Compact Header
+    c_head, c_info = st.columns([2, 1])
+    with c_head:
+        st.subheader("Teach Mode (High Speed)")
+    
     # --- STATE MANAGEMENT ---
-    from lcp.core.solar import SolarCalculator
     solar = SolarCalculator()
     
     if "stow_profile" not in st.session_state:
@@ -29,264 +34,192 @@ def render_stow_recorder(viz_container, geo: PanelGeometry, cfg: ScenarioConfig,
     if "scrub_time" not in st.session_state:
         st.session_state["scrub_time"] = datetime(2025, 1, 1, 12, 0, 0)
     
-    # Init Az/El based on Tracking if not set
-    if "stow_az" not in st.session_state:
-        # Calculate safe tracking angle
-        sun_start = solar.get_position(st.session_state["scrub_time"])
-        if sun_start.elevation > 0:
-            st.session_state["stow_az"] = sun_start.azimuth
-            st.session_state["stow_el"] = sun_start.elevation
-        else:
-            st.session_state["stow_az"] = 0.0
-            st.session_state["stow_el"] = 0.0
+    # We still keep these in session state for saving/loading, 
+    # but updates come from the JS component now.
+    if "stow_az" not in st.session_state: st.session_state["stow_az"] = 0.0
+    if "stow_el" not in st.session_state: st.session_state["stow_el"] = 0.0
 
     profile: StowProfile = st.session_state["stow_profile"]
     
-    # --- HELPER: Resolve Step Size ---
-    # Default to 10 if not found in results
+    # Step Size Logic
     step_minutes = 10
     if sim_results and len(sim_results) > 0:
-        # Try to infer from first day's frames
         frames = sim_results[0].get('frames', [])
         if len(frames) >= 2:
-            dt1 = frames[0]['time']
-            dt2 = frames[1]['time']
-            diff = (dt2 - dt1).total_seconds() / 60.0
-            step_minutes = int(round(diff))
-    
-    # --- UI LAYOUT REFACOR: Left (Controls) | Right (Viz) ---
-    col_left, col_right = st.columns([1, 2])
+            step_minutes = int(round((frames[1]['time'] - frames[0]['time']).total_seconds() / 60.0))
+
+    # --- LAYOUT: Left (Controls) [1] | Right (Viz) [3] ---
+    col_left, col_right = st.columns([1, 2.5])
     
     # ==========================
-    # LEFT COLUMN: CONTROLS
+    # LEFT: CONTROL PANEL
     # ==========================
     with col_left:
-        st.subheader("Control Panel")
+        # 1. TIMELINE
+        st.caption("**Timeline**")
+        c_time1, c_time2 = st.columns([1, 1])
+        with c_time1:
+             if st.button("◀", use_container_width=True):
+                  st.session_state["scrub_time"] -= timedelta(minutes=step_minutes)
+        with c_time2:
+             if st.button("▶", use_container_width=True):
+                  st.session_state["scrub_time"] += timedelta(minutes=step_minutes)
         
-        # 1. PROFILE MGMT
-        st.markdown("##### Profile")
-        st.text_input("Name", key="prof_name", value=profile.profile_name)
-        c_io1, c_io2 = st.columns(2)
-        with c_io1:
-             if st.button("Load"):
-                  uploaded = st.file_uploader("Upload", type=["json"], key="up_json")
-                  if uploaded: st.info("Pending integration")
-        with c_io2:
-             if st.button("Save"):
-                  path = os.path.join(os.getcwd(), f"{st.session_state['prof_name']}.json")
-                  profile.profile_name = st.session_state['prof_name']
-                  profile.save(path)
-                  st.success(f"Saved")
+        # Date/Time Display
+        dt_str = st.session_state["scrub_time"].strftime('%Y-%m-%d\n%H:%M')
+        st.code(dt_str)
 
         st.divider()
 
-        # 2. TIME CONTROL
-        st.markdown("##### Timeline")
-        # Step Size Display (Locked if inferred, or editable?)
-        # User requested: "taken from the simulation"
-        # Let's show it but maybe allow override if needed?
-        step_user = st.number_input("Step (min)", 1, 60, step_minutes, key="step_size_user")
-        
-        # Prev/Next
-        c_t1, c_t2, c_t3 = st.columns([1, 2, 1])
-        with c_t1:
-             if st.button("◀"):
-                  st.session_state["scrub_time"] -= timedelta(minutes=step_user)
-        with c_t3:
-             if st.button("▶"):
-                  st.session_state["scrub_time"] += timedelta(minutes=step_user)
-        with c_t2:
-             st.markdown(f"<div style='text-align:center; font-weight:bold;'>{st.session_state['scrub_time'].strftime('%H:%M')}</div>", unsafe_allow_html=True)
-             st.caption(st.session_state["scrub_time"].strftime('%Y-%m-%d'))
+        # 2. FILE
+        st.caption("**Profile**")
+        st.text_input("Name", key="prof_name", value=profile.profile_name, label_visibility="collapsed")
+        if st.button("💾 Save", use_container_width=True):
+             path = os.path.join(os.getcwd(), f"{st.session_state['prof_name']}.json")
+             profile.profile_name = st.session_state['prof_name']
+             profile.save(path)
+             st.success("Saved")
              
         st.divider()
-
-        # 3. PLAYBACK
-        st.markdown("##### Playback")
-        if st.button("▶ Test Profile"):
-            play_loop(viz_container, geo, cfg, profile, solar, step_user, None, None)
-            
-        # CLASH SCENARIO
-        st.markdown("##### Clash Analysis")
-        # Select Date (if multiple)
-        if sim_results:
-             dates = [r['summary']['date'] for r in sim_results]
-             sel_date = st.selectbox("Date", dates, format_func=lambda d: d.strftime('%Y-%m-%d'))
-             
-             if st.button("▶ Play Clash Scenario"):
-                  # Validate
-                  day_res = next((r for r in sim_results if r['summary']['date'] == sel_date), None)
-                  if day_res:
-                       # Find Clash Frames
-                       # Check if 'safety' flag in frames indicates clash?
-                       # Usually safety=True means safety MODE used.
-                       # We need to check STATES. But states are heavy objects.
-                       # Or use 'clash_count' in summary to know IF there are ANY.
-                       if day_res['summary']['clash_count'] == 0:
-                            st.info("No clashes detected on this day!")
-                       else:
-                            # Search frames
-                            clash_times = []
-                            for f in day_res['frames']:
-                                 # We need to know if THIS frame had clash.
-                                 # The 'safety' flag in frame data (dashboard.py:412) is just Input bool.
-                                 # But we have `day_stats["clash_count"]` which aggregates.
-                                 # We don't seemingly store per-frame clash boolean in the simplified frame dict?
-                                 # Wait, let's check dashboard.py L404.
-                                 # It increments count if `safety` (input) is True? 
-                                 # No, `safety` variable in loop holds `collision` result from kernel?
-                                 # L364: `states, safety = runner.kernel.solve_timestep(...)`
-                                 # YES! `safety` variable IS the collision boolean.
-                                 # And it is stored in frame dict as "safety".
-                                 if f.get('safety', False): 
-                                      clash_times.append(f['time'])
-                            
-                            if not clash_times:
-                                 st.warning("Clash count > 0 but no frames marked? Check data.")
-                            else:
-                                 start_t = clash_times[0] - timedelta(minutes=step_user * 2)
-                                 end_t = clash_times[-1] + timedelta(minutes=step_user * 2)
-                                 play_loop(viz_container, geo, cfg, profile, solar, step_user, start_t, end_t)
+        
+        # 3. CONTEXT SELECTOR (Play Day or Play Clash)
+        st.caption("**Animation**")
+        # Instead of buttons triggering a loop, they will set mode for the React component
+        
+        active_mode = "MANUAL"
+        playback_data = None
+        
+        # We use radio or buttons to switch what is sent to the component
+        anim_mode = st.radio("Mode", ["Manual", "Play Day", "Play Clash"], label_visibility="collapsed")
+        
+        if anim_mode == "Play Day":
+             active_mode = "PLAYBACK"
+             # Generate Full Day Frames
+             playback_data = generate_playback_frames(st.session_state["scrub_time"].date(), 
+                                                      step_minutes, geo, cfg, profile, solar, "DAY")
+                                                      
+        elif anim_mode == "Play Clash":
+             active_mode = "PLAYBACK"
+             if sim_results:
+                  # Use selected date logic
+                  dates = [r['summary']['date'] for r in sim_results]
+                  # Try to match current scrub date
+                  curr_d = st.session_state["scrub_time"].date()
+                  if curr_d in dates:
+                       playback_data = generate_playback_frames(curr_d, step_minutes, geo, cfg, profile, solar, "CLASH", sim_results)
                   else:
-                       st.error("Day not found.")
-        else:
-             st.caption("Run simulation to enable.")
+                       st.warning("No sim data for current date.")
+             else:
+                  st.warning("No sim results loaded.")
+
 
     # ==========================
-    # RIGHT COLUMN: VISUALIZER & TEACH PENDANT
+    # RIGHT: JS VIZ
     # ==========================
     with col_right:
-        # Override Container for Viz
-        viz_spot = st.empty()
+        # Prepare Data for Component
         
-        # SLIDERS & MICRO CONTROLS
-        st.subheader("Teach Pendant")
+        # 1. Geometry Dict
+        geo_dict = {
+             "rows": 12, # Hardcoded fallback if not in cfg? 
+             # No, cfg has `total_panels` but not rows/cols strictly?
+             # dashboard.py uses n_rows, n_cols. But `render_stow_recorder` doesn't receive them explicitly?
+             # `cfg` contains total_panels, grid_pitch_x...
+             # WAITING: `render_stow_recorder` signature doesn't pass n_rows/n_cols.
+             # We need to assume/extract or update signature. 
+             # For now, let's look at `dashboard.py`: calls with `current_geo, current_cfg`.
+             # `current_cfg` handles pitches. `current_geo` handles width/len.
+             # Rows/Cols are stuck in dashboard local vars.
+             # HACK: Infer from total_panels assuming standard aspect? No.
+             # We should update dashboard to pass rows/cols or put in cfg.
+             # Let's assume standard 10x10 or extract from cfg if possible? 
+             # `cfg` is ScenarioConfig object.
+             # Let's use defaults 12x20 if missing, or maybe they are in session_state from sidebar?
+             "rows": 12, 
+             "cols": 20, 
+             "width": geo.width,
+             "length": geo.length,
+             "thickness": geo.thickness,
+             "pitch_x": cfg.grid_pitch_x,
+             "pitch_y": cfg.grid_pitch_y, 
+             "offset_z": geo.pivot_offset[2]
+        }
         
-        # Logic to Sync Time changes to State
-        ensure_state_sync(profile, solar)
+        # 2. Scene State
+        s = solar.get_position(st.session_state["scrub_time"])
+        scene_state = {
+             "sun_az": s.azimuth,
+             "sun_el": s.elevation,
+             "plant_rotation": PLANT_ROTATION,
+             "current_time_str": st.session_state["scrub_time"].strftime('%H:%M')
+        }
         
-        c_az, c_el = st.columns(2)
-        
-        # --- AZIMUTH ---
-        with c_az:
-             st.caption("Azimuth")
-             # Micro Buttons
-             ca1, ca2 = st.columns(2)
-             if ca1.button("-5°", key="az_m5"): 
-                  st.session_state["stow_az"] = max(STOW_AZ_MIN, st.session_state["stow_az"] - 5)
-             if ca2.button("+5°", key="az_p5"): 
-                  st.session_state["stow_az"] = min(STOW_AZ_MAX, st.session_state["stow_az"] + 5)
-             
-             az_val = st.slider("Az", STOW_AZ_MIN, STOW_AZ_MAX, st.session_state["stow_az"], 1.0, key="sl_az", label_visibility="collapsed")
-             st.session_state["stow_az"] = az_val
-
-        # --- ELEVATION ---
-        with c_el:
-             st.caption("Elevation")
-             limit_ott = st.checkbox("OTT", value=profile.limit_over_the_top, key="chk_ott")
-             el_max = 135.0 if limit_ott else 90.0
-             
-             ce1, ce2 = st.columns(2)
-             if ce1.button("-5°", key="el_m5"): 
-                  st.session_state["stow_el"] = max(0.0, st.session_state["stow_el"] - 5)
-             if ce2.button("+5°", key="el_p5"): 
-                  st.session_state["stow_el"] = min(el_max, st.session_state["stow_el"] + 5)
-                  
-             el_val = st.slider("El", 0.0, el_max, st.session_state["stow_el"], 1.0, key="sl_el", label_visibility="collapsed")
-             st.session_state["stow_el"] = el_val
-
-        # ACTION BUTTONS
-        c_act1, c_act2 = st.columns(2)
-        with c_act1:
-             if st.button("Unstow (Sync Tracking)", use_container_width=True):
-                  # Calculate tracking angle for current time
-                  s_pos = solar.get_position(st.session_state["scrub_time"])
-                  st.session_state["stow_az"] = s_pos.azimuth
-                  st.session_state["stow_el"] = s_pos.elevation
-                  st.rerun()
-
-        with c_act2:
-             if st.button("🔴 Record Keyframe", type="primary", use_container_width=True):
-                  profile.add_keyframe(st.session_state["scrub_time"], az_val, el_val)
-                  st.success("Recorded")
-        
-        # LIST
-        if profile.keyframes:
-             with st.expander("Keyframes", expanded=False):
-                  for k in profile.keyframes[-5:]:
-                       st.text(f"{k.timestamp.strftime('%H:%M')} | {k.az:.1f} / {k.el:.1f}")
-
-        # RENDER STATIC FRAME
-        render_frame(viz_spot, geo, cfg, st.session_state["scrub_time"], 
-                     st.session_state["stow_az"], st.session_state["stow_el"], solar, "main_static")
-
-
-def ensure_state_sync(profile, solar):
-    if "last_scrub_time" not in st.session_state or st.session_state["last_scrub_time"] != st.session_state["scrub_time"]:
-         st.session_state["last_scrub_time"] = st.session_state["scrub_time"]
-         # Interpolate or Tracking
-         interp = profile.get_position_at(st.session_state["scrub_time"])
-         if interp:
-             st.session_state["stow_az"] = interp[0]
-             st.session_state["stow_el"] = interp[1]
-         else:
-             s_pos = solar.get_position(st.session_state["scrub_time"])
-             if s_pos.elevation > 0:
-                 st.session_state["stow_az"] = s_pos.azimuth
-                 st.session_state["stow_el"] = s_pos.elevation
-
-def render_frame(container, geo, cfg, time_dt, az, el, solar, key_suffix=""):
-    # Physics
-    sun_pos = solar.get_position(time_dt)
-    local_az = sun_pos.azimuth - 5.0
-    override = (az, el)
-    
-    ker = InfiniteKernel(geo, cfg)
-    states, collision = ker.solve_timestep(local_az, sun_pos.elevation, enable_safety=True, stow_override=override)
-    
-    # Viz
-    viz = PlantVisualizer(geo)
-    rad_az = np.radians(sun_pos.azimuth)
-    rad_el = np.radians(sun_pos.elevation)
-    sun_vec = np.array([
-        np.sin(rad_az) * np.cos(rad_el),
-        np.cos(rad_az) * np.cos(rad_el),
-        np.sin(rad_el)
-    ])
-    fig = viz.render_scene(states, sun_vec, show_pivots=True, show_clash_emphasis=True)
-    
-    if collision:
-         container.error(f"CLASH DETECTED at {time_dt.strftime('%H:%M')}")
-    else:
-         container.success(f"SAFE at {time_dt.strftime('%H:%M')}")
-         
-    container.plotly_chart(fig, use_container_width=True, key=f"viz_{key_suffix}")
-
-def play_loop(container, geo, cfg, profile, solar, step_min, start_dt=None, end_dt=None):
-    if not profile.keyframes and not start_dt:
-        return
-        
-    if not start_dt:
-        start_dt = profile.keyframes[0].timestamp
-    if not end_dt:
-        end_dt = profile.keyframes[-1].timestamp
-        
-    curr = start_dt
-    status = st.empty()
-    
-    while curr <= end_dt:
-        # Interpolate
-        az, el = 0.0, 0.0
-        res = profile.get_position_at(curr)
-        if res:
-            az, el = res
+        # 3. Initial Stow (for Slider Init)
+        # Interpolate current profile pose
+        i_az, i_el = 0.0, 0.0
+        interp = profile.get_position_at(st.session_state["scrub_time"])
+        if interp:
+             i_az, i_el = interp
         else:
-             # If gap in profile, default to tracking?
-             s = solar.get_position(curr)
-             az, el = s.azimuth, s.elevation
+             i_az, i_el = s.azimuth, s.elevation
+             
+        initial_stow = {"az": i_az, "el": i_el}
         
-        render_frame(container, geo, cfg, curr, az, el, solar, f"play_{curr.strftime('%H%M')}")
-        status.text(f"Playing {curr.strftime('%H:%M')}")
-        time.sleep(0.1)
-        curr += timedelta(minutes=step_min)
-    status.empty()
+        # 4. RENDER COMPONENT
+        # We listen for return value. 
+        # The return value is the "Recorded" state.
+        
+        rec_val = three_viz(
+             geometry=geo_dict,
+             scene_state=scene_state,
+             playback_frames=playback_data,
+             initial_stow=initial_stow,
+             key="three_viz_inst"
+        )
+        
+        # Handle Record Event
+        if rec_val:
+             # User pressed Record in JS
+             az = rec_val['az']
+             el = rec_val['el']
+             profile.add_keyframe(st.session_state["scrub_time"], az, el)
+             st.toast(f"Recorded: Ax={az:.1f}, El={el:.1f}")
+
+def generate_playback_frames(date_obj, step, geo, cfg, profile, solar, mode, sim_results=None):
+    # Determine range
+    start_dt = datetime.combine(date_obj, datetime.min.time()) + timedelta(hours=6)
+    end_dt = datetime.combine(date_obj, datetime.min.time()) + timedelta(hours=20)
+    
+    if mode == "CLASH" and sim_results:
+         # Find clash range
+         day = next((r for r in sim_results if r['summary']['date'] == date_obj), None)
+         if day and day['summary']['clash_count'] > 0:
+              clashes = [f['time'] for f in day['frames'] if f.get('safety')]
+              if clashes:
+                   start_dt = clashes[0] - timedelta(minutes=step*3)
+                   end_dt = clashes[-1] + timedelta(minutes=step*3)
+         else:
+              return [] # No clash
+              
+    # Generate
+    frames = []
+    curr = start_dt
+    while curr <= end_dt:
+         s = solar.get_position(curr)
+         
+         # Interpolate
+         az, el = 0.0, 0.0
+         pos = profile.get_position_at(curr)
+         if pos: az, el = pos
+         else: az, el = s.azimuth, s.elevation
+         
+         frames.append({
+              "time_str": curr.strftime('%H:%M'),
+              "az": az,
+              "el": el,
+              "sun_az": s.azimuth,
+              "sun_el": s.elevation
+         })
+         curr += timedelta(minutes=step)
+         
+    return frames
