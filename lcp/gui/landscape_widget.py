@@ -30,7 +30,7 @@ class AnnualLandscapeWidget(QWidget):
         self.overlay.setStyleSheet("background-color: rgba(0, 0, 0, 150); border-radius: 5px; padding: 5px;")
         l_ov = QVBoxLayout(self.overlay)
         
-        self.lbl_title = QLabel("Annual Power Landscape")
+        self.lbl_title = QLabel("Power Landscape")
         self.lbl_title.setStyleSheet("color: white; font-weight: bold; font-size: 14px;")
         l_ov.addWidget(self.lbl_title)
         
@@ -50,6 +50,20 @@ class AnnualLandscapeWidget(QWidget):
         add_leg("qlineargradient(stop:0 blue, stop:1 yellow)", "Actual Power (Surface)")
         add_leg("white", "Theoretical Max (Lines)")
         
+        # Separator
+        l_ov.addSpacing(10)
+        
+        # Period Totals
+        self.lbl_total_theo = QLabel("Theo: 0 MWh")
+        self.lbl_total_act = QLabel("Act: 0 MWh")
+        # Losses
+        self.lbl_loss_stow = QLabel("Stow Loss: 0%")
+        self.lbl_loss_shad = QLabel("Shad Loss: 0%")
+        
+        for lbl in [self.lbl_total_theo, self.lbl_total_act, self.lbl_loss_stow, self.lbl_loss_shad]:
+             lbl.setStyleSheet("color: white; font-size: 11px;")
+             l_ov.addWidget(lbl)
+             
         self.overlay.adjustSize()
         self.overlay.move(20, 20)
         
@@ -60,9 +74,6 @@ class AnnualLandscapeWidget(QWidget):
         g.setSpacing(x=10, y=10, z=0)
         self.view.addItem(g)
         
-        # Axis Lines
-        # self.view.addItem(gl.GLAxisItem(size=gl.QVector3D(50,50,50)))
-        
         # Placeholders
         self.surface = None
         self.theo_lines = None
@@ -72,7 +83,31 @@ class AnnualLandscapeWidget(QWidget):
         self.x_times = None 
         
     def update_data(self, results):
-        if not results: return
+        if not results: 
+             # Reset Labels
+             self.lbl_total_theo.setText("Theo: 0 MWh")
+             self.lbl_total_act.setText("Act: 0 MWh")
+             self.lbl_loss_stow.setText("Stow Loss: 0%")
+             self.lbl_loss_shad.setText("Shad Loss: 0%")
+             return
+        
+        # --- CALC TOTALS ---
+        sum_theo = sum(d['summary'].get('theo_kwh', 0) for d in results)
+        sum_act = sum(d['summary'].get('act_kwh', 0) for d in results)
+        sum_stow = sum(d['summary'].get('stow_loss_kwh', 0) for d in results)
+        sum_shad = sum(d['summary'].get('shad_loss_kwh', 0) for d in results)
+        
+        stow_pct = (sum_stow / sum_theo * 100) if sum_theo > 0 else 0
+        shad_pct = (sum_shad / sum_theo * 100) if sum_theo > 0 else 0
+        
+        self.lbl_total_theo.setText(f"Theo: {sum_theo/1000:.1f} MWh")
+        self.lbl_total_act.setText(f"Act: {sum_act/1000:.1f} MWh")
+        self.lbl_loss_stow.setText(f"Stow Loss: {stow_pct:.1f}%")
+        self.lbl_loss_shad.setText(f"Shad Loss: {shad_pct:.1f}%")
+        
+        self.overlay.adjustSize()
+        
+        # --- 3D UPDATE ---
         
         # Clear Old
         if self.surface: 

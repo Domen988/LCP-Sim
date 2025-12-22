@@ -260,9 +260,13 @@ class SimulationWorker(QThread):
                          "time": dt,
                          "sun_az": sun.azimuth,
                          "sun_el": sun.elevation,
+                         "dni": dni,
                          "theo_w": step_theo_w,
                          "act_w": step_act_w,
-                         "safety": safety
+                         "stow_w": step_stow_w,
+                         "shad_w": step_shad_w,
+                         "safety": safety,
+                         "states": states
                     })
                 
                 # End Day
