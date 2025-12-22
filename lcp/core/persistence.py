@@ -181,3 +181,36 @@ class PersistenceManager:
                 results.append(res_obj)
                 
         return geo, cfg, results
+        
+    def delete_simulation(self, name: str) -> bool:
+        """
+        Deletes a simulation directory.
+        Includes handling for Windows 'Access Denied' on read-only files.
+        """
+        import stat
+        
+        sim_dir = os.path.join(self.base_path, name)
+        
+        # Guard against deleting current working directory
+        try:
+            if os.path.abspath(sim_dir) == os.getcwd():
+                os.chdir(os.path.dirname(os.path.abspath(sim_dir)))
+        except:
+            pass
+
+        if os.path.exists(sim_dir) and os.path.isdir(sim_dir):
+            def on_rm_error(func, path, exc_info):
+                # Attempt to fix read-only files/folders
+                os.chmod(path, stat.S_IWRITE)
+                try:
+                    func(path)
+                except Exception:
+                    pass
+                    
+            try:
+                shutil.rmtree(sim_dir, onerror=on_rm_error)
+                return True
+            except Exception as e:
+                print(f"Error deleting simulation: {e}")
+                return False
+        return False

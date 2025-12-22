@@ -42,8 +42,13 @@ class ResultsWidget(QWidget):
         self.table_tab.setLayout(l)
         
         self.table = QTableWidget()
-        self.table.setColumnCount(5)
-        self.table.setHorizontalHeaderLabels(["Date", "Theoretical (MWh)", "Actual (MWh)", "Stow Loss %", "Shadow Loss %"])
+        self.table.setColumnCount(8) # Added Accum Columns
+        self.table.setHorizontalHeaderLabels([
+            "Date", "Theo (MWh)", "Act (MWh)", 
+            "Stow Loss %", "Shadow Loss %", 
+            "Σ Theo (MWh)", "Σ Act (MWh)", "Efficiency %"
+        ])
+        
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self.table.itemSelectionChanged.connect(self.on_day_selected)
@@ -53,7 +58,9 @@ class ResultsWidget(QWidget):
         l = QVBoxLayout()
         self.plot_tab.setLayout(l)
         
-        self.chart = pg.PlotWidget()
+        # Date Axis for X
+        axis = pg.AxisItem(orientation='bottom')
+        self.chart = pg.PlotWidget(axisItems={'bottom': axis})
         self.chart.setBackground('k')
         self.chart.addLegend()
         self.chart.showGrid(x=True, y=True)
@@ -92,19 +99,30 @@ class ResultsWidget(QWidget):
         
         # 1. Update Table
         self.table.setRowCount(len(data))
+        
+        cum_theo = 0.0
+        cum_act = 0.0
+        
         for r, day in enumerate(data):
             summ = day['summary']
             t_mwh = summ['theo_kwh'] / 1000
             a_mwh = summ['act_kwh'] / 1000
             
+            cum_theo += t_mwh
+            cum_act += a_mwh
+            
             stow_pct = (summ['stow_loss_kwh'] / summ['theo_kwh'] * 100) if t_mwh > 0 else 0
             shad_pct = (summ['shad_loss_kwh'] / summ['theo_kwh'] * 100) if t_mwh > 0 else 0
+            eff_pct = (cum_act / cum_theo * 100) if cum_theo > 0 else 0
             
             self.table.setItem(r, 0, QTableWidgetItem(str(summ['date'])))
             self.table.setItem(r, 1, QTableWidgetItem(f"{t_mwh:.2f}"))
             self.table.setItem(r, 2, QTableWidgetItem(f"{a_mwh:.2f}"))
             self.table.setItem(r, 3, QTableWidgetItem(f"{stow_pct:.1f}%"))
             self.table.setItem(r, 4, QTableWidgetItem(f"{shad_pct:.1f}%"))
+            self.table.setItem(r, 5, QTableWidgetItem(f"{cum_theo:.2f}"))
+            self.table.setItem(r, 6, QTableWidgetItem(f"{cum_act:.2f}"))
+            self.table.setItem(r, 7, QTableWidgetItem(f"{eff_pct:.1f}%"))
             
         # Select first day by default
         self.table.selectRow(0)
@@ -124,6 +142,17 @@ class ResultsWidget(QWidget):
         # Setup Slider
         self.slider.setRange(0, len(self.current_frames) - 1)
         self.slider.setValue(0)
+        
+        # Setup X Axis Tick Strings
+        # Subsample to keep readable (e.g., every hour)
+        ticks = []
+        for i, f in enumerate(self.current_frames):
+             dt = f['time']
+             if dt.minute == 0: # Hourly ticks
+                  ticks.append((i, dt.strftime("%H:%M")))
+        
+        ax = self.chart.getAxis('bottom')
+        ax.setTicks([ticks])
         
         # Plot
         self.chart.clear()

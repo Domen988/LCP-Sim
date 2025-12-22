@@ -62,6 +62,7 @@ class MainWindow(QMainWindow):
         
         # Connect Simulation Runner
         self.sidebar.run_requested.connect(self.start_simulation)
+        self.sidebar.save_requested.connect(self.on_save_requested)
         
         # Connect Replay Viz
         self.results.replay_frame.connect(self.viewport.update_from_frame)
@@ -86,7 +87,7 @@ class MainWindow(QMainWindow):
         
         self.worker = SimulationWorker(self.state, dt_start, days)
         # Signals
-        self.worker.progress.connect(self.on_progress) # Need to add ProgressBar to StatusBar or Sidebar?
+        self.worker.progress.connect(self.on_progress)
         self.worker.status.connect(self.statusBar().showMessage)
         self.worker.finished_data.connect(self.on_sim_finished)
         self.worker.error.connect(lambda e: self.statusBar().showMessage(f"Error: {e}"))
@@ -94,7 +95,6 @@ class MainWindow(QMainWindow):
         self.worker.start()
         
     def on_progress(self, val):
-        # Update progress bar on Sidebar button? Or Status Bar
         self.sidebar.btn_run.setText(f"Running... {val}%")
         
     def on_sim_finished(self, data):
@@ -106,3 +106,19 @@ class MainWindow(QMainWindow):
     def on_load_finished(self, data):
         self.results.update_results(data)
         self.statusBar().showMessage(f"Loaded {len(data)} Days.")
+        
+    def on_save_requested(self, name):
+         self.statusBar().showMessage(f"Saving to {name}...")
+         data = self.results.all_data
+         if not data:
+              self.statusBar().showMessage("No data to save.")
+              return
+         try:
+              # Ensure PM base path is updated incase sidebar changed it
+              # (It shares the state.storage_path but PM object in Sidebar might need update if we used a new instance)
+              # But Sidebar.pm is updated in update_path_manual.
+              clean = self.sidebar.pm.save_simulation(name, self.state.geometry, self.state.config, data)
+              self.sidebar.refresh_load_list()
+              self.statusBar().showMessage(f"Saved: {clean}")
+         except Exception as e:
+              self.statusBar().showMessage(f"Save Failed: {e}")
