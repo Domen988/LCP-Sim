@@ -1,3 +1,4 @@
+
 import os
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QLabel, QLineEdit, QPushButton, 
                              QDoubleSpinBox, QSpinBox, QCheckBox, QDateEdit, 
@@ -56,7 +57,6 @@ class CollapsibleBox(QWidget):
         self.toggle_animation.start()
 
     def setContentLayout(self, layout):
-        # We manually move items? Or just expect user to add to self.content_layout
         pass
         
     def addLayout(self, layout):
@@ -77,6 +77,11 @@ class Sidebar(QWidget):
     load_requested = pyqtSignal(list) # Emits results data
     save_requested = pyqtSignal(str) # Emits name to save
     
+    # Styles
+    STYLE_READY = "background-color: #2e7d32; color: white; font-weight: bold; padding: 5px;"
+    STYLE_STALE = "background-color: #ef6c00; color: white; font-weight: bold; padding: 5px;"
+    STYLE_RUNNING = "background-color: #555555; color: white; padding: 5px;"
+
     def __init__(self, state: AppState, parent=None):
         super().__init__(parent)
         self.state = state
@@ -198,6 +203,8 @@ class Sidebar(QWidget):
             self.update_widgets_from_state()
             self.geometry_changed.emit()
             self.load_requested.emit(res)
+            # Parameters match results now
+            self.reset_ready()
         except Exception as e:
             print(f"Load Error: {e}")
 
@@ -223,6 +230,7 @@ class Sidebar(QWidget):
         add_float("Thickness (m)", "thickness", 0.01, 0.5, 0.01, g)
         add_float("Pitch X (m)", "grid_pitch_x", 0.5, 10.0, 0.1, c)
         add_float("Pitch Y (m)", "grid_pitch_y", 0.5, 10.0, 0.1, c)
+        add_float("Clash Tolerance (m)", "tolerance", 0.0, 0.5, 0.01, c)
         
         box.addLayout(form)
         self.layout.addWidget(box)
@@ -242,6 +250,7 @@ class Sidebar(QWidget):
         else:
              setattr(obj, attr, val)
         self.geometry_changed.emit()
+        self.set_stale()
 
     def init_sizing(self):
         box = CollapsibleBox("Plant Sizing", expanded=False)
@@ -272,13 +281,12 @@ class Sidebar(QWidget):
         self.state.config.total_panels = self.state.rows * self.state.cols
         self.lbl_total.setText(str(self.state.config.total_panels))
         self.geometry_changed.emit()
+        self.set_stale()
 
     def init_sim_settings(self):
-        box = CollapsibleBox("Simulation Settings", expanded=True) # Check if user wants this min by default? "minimized by default". Okay.
+        box = CollapsibleBox("Simulation Settings", expanded=True) 
         # override: collapsed
         box.toggle_button.setChecked(False) 
-        # Actually constructor usage: expanded=False is default.
-        # I'll leave it simple.
         
         form = QFormLayout()
         s = self.state.sim_settings
@@ -310,23 +318,32 @@ class Sidebar(QWidget):
         
         # Run Button outside
         self.btn_run = QPushButton("▶ RUN SIMULATION")
-        self.btn_run.setStyleSheet("background-color: #2e7d32; color: white; font-weight: bold; padding: 5px;")
+        self.btn_run.setStyleSheet(self.STYLE_READY)
         self.btn_run.clicked.connect(self.run_requested.emit)
         self.layout.addWidget(self.btn_run)
         
     def init_visual_settings(self):
-         # "Missing controls from web dashboard" (Sunrays, Pivots, etc.)
          box = CollapsibleBox("3D View Settings", expanded=False)
          form = QFormLayout()
          
-         # These will likely connect to viewport options directly in future
-         # For now, placeholder checkboxes to match parity visually or functionally if easy
-         self.cb_show_pivots = QCheckBox("Show Pivots")
+         self.cb_show_pivots = QCheckBox("Pivots")
          self.cb_show_pivots.setChecked(True)
          form.addRow(self.cb_show_pivots)
          
-         self.cb_show_rays = QCheckBox("Show Sunrays")
+         self.cb_show_rays = QCheckBox("Sunrays")
          form.addRow(self.cb_show_rays)
+         
+         self.cb_show_full = QCheckBox("Full Plant")
+         self.cb_show_full.setChecked(False)
+         form.addRow(self.cb_show_full)
+         
+         self.cb_stow = QCheckBox("Enable Stow Strategy")
+         self.cb_stow.setChecked(False)
+         form.addRow(self.cb_stow)
+
+         self.cb_show_tolerance = QCheckBox("Panels with Tolerance")
+         self.cb_show_tolerance.setChecked(False)
+         form.addRow(self.cb_show_tolerance)
          
          box.addLayout(form)
          self.layout.addWidget(box)
@@ -340,6 +357,24 @@ class Sidebar(QWidget):
         s.timestep_min = self.sb_step.value()
         
         self.sb_days.setEnabled(not s.full_year)
+        self.set_stale()
+        
+    def set_stale(self):
+        """Mark params as changed"""
+        self.btn_run.setStyleSheet(self.STYLE_STALE)
+        self.btn_run.setText("Input modified - Rerun")
+        
+    def set_running(self):
+        """Mark as running"""
+        self.btn_run.setStyleSheet(self.STYLE_RUNNING)
+        self.btn_run.setText("Running...")
+        self.btn_run.setEnabled(False)
+        
+    def reset_ready(self):
+        """Mark as ready/synced"""
+        self.btn_run.setStyleSheet(self.STYLE_READY)
+        self.btn_run.setText("▶ RUN SIMULATION")
+        self.btn_run.setEnabled(True)
         
     def update_widgets_from_state(self):
         """
@@ -347,7 +382,7 @@ class Sidebar(QWidget):
         Block signals to prevent triggering change events during update.
         """
         # Block Signals
-        self.blockSignals(True) # Blocks parent, but we need to block individual widgets
+        self.blockSignals(True) 
         
         # Geometry
         g = self.state.geometry
@@ -360,6 +395,7 @@ class Sidebar(QWidget):
         c = self.state.config
         self.sb_grid_pitch_x.blockSignals(True); self.sb_grid_pitch_x.setValue(c.grid_pitch_x); self.sb_grid_pitch_x.blockSignals(False)
         self.sb_grid_pitch_y.blockSignals(True); self.sb_grid_pitch_y.setValue(c.grid_pitch_y); self.sb_grid_pitch_y.blockSignals(False)
+        self.sb_tolerance.blockSignals(True); self.sb_tolerance.setValue(c.tolerance); self.sb_tolerance.blockSignals(False)
         
         # Sizing
         self.sb_rows.blockSignals(True); self.sb_rows.setValue(self.state.rows); self.sb_rows.blockSignals(False)

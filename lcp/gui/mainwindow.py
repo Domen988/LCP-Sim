@@ -1,5 +1,6 @@
 
 from PyQt6.QtWidgets import (QMainWindow, QDockWidget, QWidget)
+from PyQt6.QtGui import QIcon
 from PyQt6.QtCore import Qt
 
 from lcp.gui.state import AppState
@@ -17,6 +18,13 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.setWindowTitle("LCP-Sim Desktop v1.0")
         self.resize(1600, 900)
+        self.showMaximized()
+        
+        # Icon
+        import os
+        icon_path = os.path.join(os.path.dirname(__file__), 'app_icon.png')
+        if os.path.exists(icon_path):
+             self.setWindowIcon(QIcon(icon_path))
         
         # 1. Init State (Defaults)
         geo = PanelGeometry(width=1.46, length=1.46, thickness=0.15, pivot_offset=(0,0,0.38-0.075))
@@ -45,6 +53,7 @@ class MainWindow(QMainWindow):
         dock_right = QDockWidget("Simulation Results", self)
         dock_right.setAllowedAreas(Qt.DockWidgetArea.RightDockWidgetArea)
         self.results = ResultsWidget()
+        self.results.state = self.state # Inject AppState for shadow reconstruction
         dock_right.setWidget(self.results)
         self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, dock_right)
         
@@ -56,6 +65,13 @@ class MainWindow(QMainWindow):
         self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, dock_bot)
         
         # --- CONNECTIONS ---
+        
+        # 0. Visual Settings
+        self.sidebar.cb_show_pivots.toggled.connect(self.viewport.set_show_pivots)
+        self.sidebar.cb_show_rays.toggled.connect(self.viewport.set_show_rays)
+        self.sidebar.cb_show_full.toggled.connect(self.viewport.set_show_full_plant)
+        self.sidebar.cb_stow.toggled.connect(self.results.set_enable_safety)
+        self.sidebar.cb_show_tolerance.toggled.connect(self.viewport.set_show_tolerance)
         
         # 1. Sidebar -> Viewport (Live Param Update)
         self.sidebar.geometry_changed.connect(self.viewport.update_scene)
@@ -74,7 +90,7 @@ class MainWindow(QMainWindow):
         
     def start_simulation(self):
         # Disable Run Button
-        self.sidebar.btn_run.setEnabled(False)
+        self.sidebar.set_running()
         self.statusBar().showMessage("Starting Simulation...")
         
         # Settings from State
@@ -98,8 +114,7 @@ class MainWindow(QMainWindow):
         self.sidebar.btn_run.setText(f"Running... {val}%")
         
     def on_sim_finished(self, data):
-        self.sidebar.btn_run.setEnabled(True)
-        self.sidebar.btn_run.setText("▶ RUN SIMULATION")
+        self.sidebar.reset_ready()
         self.results.update_results(data)
         self.statusBar().showMessage(f"Simulation Complete. {len(data)} Days Processed.")
         

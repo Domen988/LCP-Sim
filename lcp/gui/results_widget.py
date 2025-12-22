@@ -5,12 +5,19 @@ import pyqtgraph as pg
 import pandas as pd
 import numpy as np
 
+# Physics Imports
+from lcp.physics.engine import InfiniteKernel, PanelState
+
 class ResultsWidget(QWidget):
-    # args: sun_az, sun_el, safety_detected
-    replay_frame = pyqtSignal(float, float, bool)
+    # args: sun_az, sun_el, safety_detected, states_list
+    replay_frame = pyqtSignal(float, float, bool, list)
     
     def __init__(self, parent=None):
         super().__init__(parent)
+        self.state = None 
+        self.kernel = None 
+        self.enable_safety = False # Viz Toggle
+        
         layout = QVBoxLayout()
         self.setLayout(layout)
         
@@ -18,12 +25,12 @@ class ResultsWidget(QWidget):
         layout.addWidget(self.tabs)
         
         # State
-        self.all_data = [] # List of day dicts
-        self.current_frames = [] # Frames for selected day
+        self.all_data = [] 
+        self.current_frames = [] 
         self.replay_idx = 0
         self.timer = QTimer()
         self.timer.timeout.connect(self.next_frame)
-        self.timer.setInterval(50) # 20 FPS
+        self.timer.setInterval(50) 
         
         # Tab 1: Summary Table
         self.table_tab = QWidget()
@@ -35,14 +42,12 @@ class ResultsWidget(QWidget):
         self.setup_plot_tab()
         self.tabs.addTab(self.plot_tab, "Power Curve")
         
-        # Tab 3: Monthly Bar (Placeholder)
-        
     def setup_table_tab(self):
         l = QVBoxLayout()
         self.table_tab.setLayout(l)
         
         self.table = QTableWidget()
-        self.table.setColumnCount(8) # Added Accum Columns
+        self.table.setColumnCount(8) 
         self.table.setHorizontalHeaderLabels([
             "Date", "Theo (MWh)", "Act (MWh)", 
             "Stow Loss %", "Shadow Loss %", 
@@ -91,9 +96,6 @@ class ResultsWidget(QWidget):
         l.addLayout(controls)
         
     def update_results(self, data):
-        """
-        Data is list of day dicts (as returned by runner)
-        """
         if not data: return
         self.all_data = data
         
@@ -125,7 +127,9 @@ class ResultsWidget(QWidget):
             self.table.setItem(r, 7, QTableWidgetItem(f"{eff_pct:.1f}%"))
             
         # Select first day by default
-        self.table.selectRow(0)
+        self.table.clearSelection()
+        if len(data) > 0:
+            self.table.selectRow(0)
         
     def on_day_selected(self):
         rows = self.table.selectionModel().selectedRows()
@@ -144,7 +148,6 @@ class ResultsWidget(QWidget):
         self.slider.setValue(0)
         
         # Setup X Axis Tick Strings
-        # Subsample to keep readable (e.g., every hour)
         ticks = []
         for i, f in enumerate(self.current_frames):
              dt = f['time']
@@ -161,15 +164,12 @@ class ResultsWidget(QWidget):
         x = range(len(self.current_frames))
         y_act = [f['act_w']/1e6 for f in self.current_frames]
         
-        # Theoretical Line
         if 'theo_w' in self.current_frames[0]:
             y_theo = [f['theo_w']/1e6 for f in self.current_frames]
             self.chart.plot(x, y_theo, pen=pg.mkPen('c', style=Qt.PenStyle.DashLine), name="Theoretical")
             
-        # Actual Power
         self.chart.plot(x, y_act, pen=pg.mkPen('g', width=2), name="Actual Power")
         
-        # Clashes
         clash_x = []
         clash_y = []
         for i, f in enumerate(self.current_frames):
@@ -196,19 +196,46 @@ class ResultsWidget(QWidget):
             self.toggle_play(False)
             self.btn_play.setChecked(False)
             
+    def set_enable_safety(self, val):
+        self.enable_safety = val
+        self.on_slider_change(self.slider.value()) # Refresh
+
     def on_slider_change(self, val):
         if not self.current_frames or val >= len(self.current_frames): return
         
         frame = self.current_frames[val]
         
-        # Update Cursor
         self.cursor_line.setValue(val)
         
-        # Update Label
         dt = frame['time']
         az = frame['sun_az']
         el = frame['sun_el']
         self.lbl_time.setText(f"{dt.strftime('%H:%M')} | Az: {az:.1f}° El: {el:.1f}°")
         
-        # Emit Update Signal
-        self.replay_frame.emit(az, el, frame['safety'])
+        # Reconstruct States if missing (for Shadows in Viz)
+        states = frame.get('states', [])
+        
+        # We ALWAYS reconstruct if we have state and kernel, to respect the Safety Toggle
+        # (loaded frames might have fixed states, but we want to simulate the toggle?)
+        # User implies we should toggle it. 
+        # But 'frames' contain pre-calculated safety?
+        # If we load a simulation, 'safety' might be baked in.
+        # But here we are doing "Feature Parity" viz.
+        # If 'states' are missing (Basic CSV), we reconstruct.
+        # If 'states' are present (Full Pickle), we might not want to override?
+        # But user changed behavior in UI.
+        # Let's override if we can reconstruct.
+        
+        if self.state:
+            try:
+                if not self.kernel:
+                     self.kernel = InfiniteKernel(self.state.geometry, self.state.config)
+                     
+                new_states, _ = self.kernel.solve_timestep(az, el, enable_safety=self.enable_safety)
+                states = new_states
+            except Exception as e:
+                print(f"Viz Reconstruct Error: {e}")
+                # Fallback to frame states if avail
+                if not states: states = []
+        
+        self.replay_frame.emit(az, el, frame['safety'], states)

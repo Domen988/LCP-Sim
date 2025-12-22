@@ -61,7 +61,7 @@ class SimulationWorker(QThread):
             self.status.emit("Loading Solar Data...")
             runner.load_data()
             
-            timestep_min = 10 # Hardcoded or Config?
+            timestep_min = self.state.sim_settings.timestep_min
             steps_per_day = int(24 * 60 / timestep_min)
             total_steps = self.days * steps_per_day
             global_step = 0

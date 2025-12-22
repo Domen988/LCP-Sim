@@ -22,7 +22,7 @@ class AppState:
     # Environment
     sun_az: float = 180.0
     sun_el: float = 45.0
-    plant_rotation: float = 5.0
+    plant_rotation: float = -5.0
     
     # Manual Control
     stow_az: float = 0.0
