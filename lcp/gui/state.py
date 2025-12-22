@@ -34,6 +34,11 @@ class AppState:
     
     # Persistence
     storage_path: str = "saved_simulations"
+    
+    # Shared Data
+    stow_profile: Optional[object] = None 
 
     def __post_init__(self):
-        pass
+        from lcp.core.stow import StowProfile
+        if self.stow_profile is None:
+             self.stow_profile = StowProfile()

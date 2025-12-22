@@ -18,6 +18,8 @@ class ResultsWidget(QWidget):
     # Signals
     # args: sun_az, sun_el, safely_detected, states_list
     replay_frame = pyqtSignal(float, float, bool, list)
+    # args: current_datetime
+    time_changed = pyqtSignal(object)
     
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -169,13 +171,22 @@ class ResultsWidget(QWidget):
         self.btn_play.clicked.connect(self.toggle_play)
         self.btn_pause = QPushButton("⏸ Pause")
         self.btn_pause.clicked.connect(self.pause)
+        
+        # Step Controls
+        self.btn_step_prev = QPushButton("◀ -1")
+        self.btn_step_prev.clicked.connect(lambda: self.step_replay(-1))
+        self.btn_step_next = QPushButton("+1 ▶")
+        self.btn_step_next.clicked.connect(lambda: self.step_replay(1))
+        
         self.lbl_time = QLabel("--:--")
         self.lbl_time.setFont(QFont("Arial", 12, QFont.Weight.Bold))
         
         ctrl_row.addWidget(self.btn_play)
         ctrl_row.addWidget(self.btn_pause)
-        ctrl_row.addStretch()
+        ctrl_row.addSpacing(20)
+        ctrl_row.addWidget(self.btn_step_prev)
         ctrl_row.addWidget(self.lbl_time)
+        ctrl_row.addWidget(self.btn_step_next)
         ctrl_row.addStretch()
         
         r_layout.addLayout(ctrl_row)
@@ -320,9 +331,15 @@ class ResultsWidget(QWidget):
         self.replay_idx = val
         self.update_instant_stats(val)
         
-    def _ensure_states(self, f):
-        """Regenerate physics states if missing (e.g. loaded from CSV)."""
-        if f.get('states'): 
+    def step_replay(self, delta):
+        # Move slider which triggers update
+        val = self.slider.value()
+        new_val = max(0, min(self.slider.maximum(), val + delta))
+        self.slider.setValue(new_val)
+
+    def _ensure_states(self, f, force_override=None):
+        """Regenerate physics states if missing OR if override requested."""
+        if f.get('states') and not force_override: 
              return
              
         # Lazy Init Kernel
@@ -349,26 +366,39 @@ class ResultsWidget(QWidget):
         # Solve
         # Adjust Azimuth for Plant Rotation
         local_az = f['sun_az'] - s.plant_rotation
-        states, safety = self.kernel.solve_timestep(local_az, f['sun_el'], enable_safety=self.enable_safety)
+        states, safety = self.kernel.solve_timestep(
+             local_az, 
+             f['sun_el'], 
+             enable_safety=self.enable_safety,
+             stow_override=force_override
+        )
         
         f['states'] = states
-        f['safety'] = safety # Update safety status based on current logic? 
-        # Note: 'safety' was saved in frame, but we just re-calculated it.
-        # Ideally we trust the re-calculation if geometry matches.
+        f['safety'] = safety 
         
     def update_instant_stats(self, idx):
         if not self.current_frames or idx >= len(self.current_frames): return
         
         f = self.current_frames[idx]
+        self.time_changed.emit(f['time'])
         
+        # Check for Profile Override
+        override = None
+        if hasattr(self, 'state') and self.state.stow_profile:
+             override = self.state.stow_profile.get_position_at(f['time'])
+             
         # Check/Regen States
         if hasattr(self, 'state'):
-             self._ensure_states(f)
+             # If we have an override, we FORCE regeneration to visualize it
+             self._ensure_states(f, force_override=override)
         
         # 1. Update Info Labels
         self.lbl_time.setText(f['time'].strftime("%H:%M"))
         self.lbl_az.setText(f"{f['sun_az']:.1f}°")
         self.lbl_el.setText(f"{f['sun_el']:.1f}°")
+        
+        # Emit Update
+        self.replay_frame.emit(f['sun_az'], f['sun_el'], f['safety'], f['states'])
         
         # Calc Losses %
         t = f.get('theo_w', 0)

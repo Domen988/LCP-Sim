@@ -12,6 +12,7 @@ from lcp.gui.runner import SimulationWorker
 
 from lcp.core.geometry import PanelGeometry
 from lcp.core.config import ScenarioConfig
+from lcp.physics.engine import InfiniteKernel
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -86,12 +87,42 @@ class MainWindow(QMainWindow):
         self.sidebar.load_requested.connect(self.on_load_finished)
         
         # 3. Recorder -> Viewport (Animation/Manual)
-        self.recorder.scene_update.connect(self.viewport.update_scene)
+        # 3. Recorder -> Viewport (Animation/Manual)
+        self.results.time_changed.connect(self.recorder.set_current_time)
+        self.recorder.manual_override.connect(self.on_manual_override)
+        
+        # 4. Init Teach Kernel (For Manual Mode Physics)
+        self.teach_kernel = InfiniteKernel(self.state.geometry, self.state.config)
+        self.sidebar.geometry_changed.connect(self.update_teach_kernel)
+        
+    def update_teach_kernel(self):
+        # Re-init kernel on geometry change
+        self.teach_kernel = InfiniteKernel(self.state.geometry, self.state.config)
+        
+    def on_manual_override(self, az, el):
+        # Use Teach Kernel to solve state with override
+        # This provides collision detection ("clash profile") and parity mixing
+        dt = self.recorder.current_time
+        sun = self.recorder.solar.get_position(dt)
+        local_az = sun.azimuth - self.state.plant_rotation
+        
+        # Solve
+        states, safety = self.teach_kernel.solve_timestep(
+             local_az, sun.elevation, 
+             enable_safety=True, 
+             stow_override=(az, el)
+        )
+        
+        # Update Viewport
+        self.viewport.update_from_frame(sun.azimuth, sun.elevation, safety, states)
         
     def start_simulation(self):
         # Disable Run Button
         self.sidebar.set_running()
         self.statusBar().showMessage("Starting Simulation...")
+        
+        # Update Teach Kernel to match latest config
+        self.update_teach_kernel()
         
         # Settings from State
         start = self.state.sim_settings.start_date

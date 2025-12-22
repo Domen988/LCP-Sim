@@ -1,0 +1,26 @@
+{
+    "profile_name": "New_Profile",
+    "limit_over_the_top": false,
+    "keyframes": [
+        {
+            "timestamp": "2025-01-01T14:30:00",
+            "az": -102.2,
+            "el": 31.2
+        },
+        {
+            "timestamp": "2025-01-01T14:40:00",
+            "az": -74.1,
+            "el": 31.2
+        },
+        {
+            "timestamp": "2025-01-01T14:50:00",
+            "az": -34.7,
+            "el": 31.2
+        },
+        {
+            "timestamp": "2025-01-01T15:00:00",
+            "az": 9.8,
+            "el": 31.2
+        }
+    ]
+}
