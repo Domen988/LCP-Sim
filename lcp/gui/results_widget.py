@@ -338,8 +338,18 @@ class ResultsWidget(QWidget):
         self.landscape.update_data(data)
         
         # Select first row
+        # Select first row or maintain selection?
+        # If we select 0, and it was already 0, the signal won't fire, so current_day_data remains stale.
+        # We must force update.
         if len(data) > 0:
-             self.table.selectRow(0) # Triggers on_day_selected
+             # If selection exists, restore it (if within bounds), otherwise 0
+             rows = self.table.selectionModel().selectedRows()
+             idx = rows[0].row() if rows else 0
+             if idx >= len(data): idx = 0
+             
+             self.table.selectRow(idx)
+             # Force update because data changed underneath
+             self.on_day_selected()
              
     def on_day_selected(self):
         rows = self.table.selectionModel().selectedRows()

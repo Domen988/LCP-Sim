@@ -239,18 +239,33 @@ class StowRecorder(QWidget):
         
         for r in range(rows):
             row = self.day_data.iloc[r]
-            time_str = row['time'].strftime("%H:%M")
-            # Sim Safety: row['safety'] is Collision Boolean (True=Clash)
+            
             # We want: Safe=Check, Clash=X
             # If row['safety'] (Collision) is True -> Clash -> X
-            safety = "❌" if row['safety'] else "✅"
+            # Note: During Load, we might have 'sim_safety' string already.
+            # Handled below.
             
             # 0: Time
+            if hasattr(row['time'], 'strftime'):
+                 time_str = row['time'].strftime("%H:%M")
+            else:
+                 time_str = str(row['time'])
+                 
             item_t = QTableWidgetItem(time_str)
             item_t.setFlags(item_t.flags() ^ Qt.ItemFlag.ItemIsEditable)
             self.table.setItem(r, 0, item_t)
             
             # 1: Sim Safety
+            # In DataFrame we expect 'safety' col (bool) OR 'sim_safety' (str/emoji from file)
+            # If loading from Simulation Results: 'safety' is bool (True=Clash).
+            # If loading from File: 'sim_safety' is "✅"/"❌".
+            if 'sim_safety' in row:
+                safety = row['sim_safety']
+            elif 'safety' in row:
+                 safety = "❌" if row['safety'] else "✅"
+            else:
+                 safety = "❓"
+                 
             item_s = QTableWidgetItem(safety)
             item_s.setFlags(item_s.flags() ^ Qt.ItemFlag.ItemIsEditable)
             self.table.setItem(r, 1, item_s)
@@ -537,6 +552,7 @@ class StowRecorder(QWidget):
         rows = self.table.rowCount()
         for r in range(rows):
             t_str = self.table.item(r, 0).text()
+            sim_safety = self.table.item(r, 1).text() # Save Sim Safety Emoji/Status
             sun_az = float(self.table.item(r, 2).text())
             sun_el = float(self.table.item(r, 3).text())
             stow_az = float(self.table.item(r, 4).text())
@@ -544,6 +560,7 @@ class StowRecorder(QWidget):
             
             data["rows"].append({
                 "time": t_str, 
+                "sim_safety": sim_safety,
                 "sun_az": sun_az,
                 "sun_el": sun_el,
                 "stow_az": stow_az, 
@@ -575,6 +592,7 @@ class StowRecorder(QWidget):
              return
              
         QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        self.blockSignals(True) # Block signals during load
         try:
             with open(path, 'r') as f:
                 data = json.load(f)
@@ -583,70 +601,69 @@ class StowRecorder(QWidget):
             if not file_rows:
                 return
 
-            # --- Interpolation Logic ---
-            # 1. Extract File Data (Time, StowAz, StowEl)
-            # We assume file rows are sorted by time.
-            # Convert time strings to seconds from start of day (or similar metric) for robust interpolation?
-            # Or just use the 'time' string if it is standard iso? No, need numeric for interp.
-            # The 'time' in rows is likely a string.
+            # --- No Interpolation Mode (Exploration) ---
+            # 1. Reconstruct DataFrame directly from File
+            # Columns needed for load_day_data: 'time', 'sun_az', 'sun_el', 'safety' (or sim_safety)
             
-            # Helper to parse time to seconds
-            def parse_time_str(t_str):
-                 # Handle "YYYY-MM-DDTHH:MM:SS" or similar
-                 # Simpler: If the file has 'time', parse it.
-                 try:
-                     return pd.to_datetime(t_str).timestamp()
-                 except:
-                     return 0.0
-
-            # Gather valid stow points from file
-            f_times = []
-            f_az = []
-            f_el = []
+            new_df = pd.DataFrame(file_rows)
             
-            for r in file_rows:
-                if 'stow_az' in r and 'stow_el' in r and 'time' in r:
-                     f_times.append(parse_time_str(r['time']))
-                     f_az.append(float(r['stow_az']))
-                     f_el.append(float(r['stow_el']))
+            # If 'time' is string, we keep it as is for display, but load_day_data expects specific handling?
+            # load_day_data: 
+            #   row['time'].strftime("%H:%M") -> assumes datetime object
+            #   We need to convert 'time' back to datetime objects if possible, or adjust load_day_data.
+            #   Let's try to convert. The date doesn't matter much for display (just HH:MM), 
+            #   but for consistency let's use the date from metadata or today.
             
-            if not f_times:
-                QMessageBox.warning(self, "Warning", "Profile contains no valid stow data.")
-                return
-
-            # 2. Get Target Times from Table
-            # Table timestamps are in current_day_data DataFrame usually, or we can parse column 0
-            # Ideally use the DataFrame self.day_data if available
-            if self.day_data is None: 
-                 return
-
-            # Use pandas generic time conversion
-            target_times_pd = pd.to_datetime(self.day_data['time'])
-            target_times = target_times_pd.map(lambda x: x.timestamp()).to_numpy()
+            meta_date = data.get("metadata", {}).get("date_label", "Unknown")
             
-            # 3. Interpolate
-            # If file has only 1 point, fill all.
-            if len(f_times) == 1:
-                interp_az = np.full(len(target_times), f_az[0])
-                interp_el = np.full(len(target_times), f_el[0])
-            else:
-                interp_az = np.interp(target_times, f_times, f_az)
-                interp_el = np.interp(target_times, f_times, f_el)
-
+            try:
+                # Try parsing. If format varies, might fail. 
+                # Saved as "HH:MM" usually? 
+                # Wait, in save_profile: t_str = self.table.item(r, 0).text() -> "HH:MM"
+                # So the file contains generic string "HH:MM". 
+                # PD.to_datetime will default to today or unix epoch.
+                # simpler: Just ensure it's a datetime object so .strftime works, OR
+                # Update load_day_data to handle string 'time'.
+                new_df['time'] = pd.to_datetime(new_df['time'], format="%H:%M")
+            except:
+                # Fallback: if parse fails, maybe it's already string.
+                # We need to monkey-patch or ensure load_day_data handles strings.
+                pass
+                
+            # 2. Update Context Labels
+            self.lbl_date.setText(f"Date: {meta_date} (Profile)")
+            
+            # 3. Reload Table
+            # We reuse load_day_data to populate the table structure
+            self.load_day_data(new_df, meta_date)
+            
+            # 4. Restore Stow Angles 
+            # load_day_data overwrites cols 4/5 with Sun Position by default.
+            # We need to overwrite them with the file's stow angles.
+            # And since we passed new_df to load_day_data, it used new_df['sun_az']...
+            # Does new_df have 'stow_az'? Yes.
+            
+            rows = len(new_df)
             self.table.blockSignals(True)
-            for i in range(len(target_times)):
-                self.table.item(i, 4).setText(f"{interp_az[i]:.1f}")
-                self.table.item(i, 5).setText(f"{interp_el[i]:.1f}")
+            for r in range(rows):
+                row = new_df.iloc[r]
+                # Overwrite the copied sun angles with actual stow angles
+                if 'stow_az' in row and 'stow_el' in row:
+                    self.table.item(r, 4).setText(f"{row['stow_az']:.1f}")
+                    self.table.item(r, 5).setText(f"{row['stow_el']:.1f}")
             self.table.blockSignals(False)
             
-            # Recalc Safety
-            for i in range(len(target_times)):
-                 self.update_row_safety(i, update_viz=(i==self.current_idx))
+            # 5. Recalc Safety (Profile Safety)
+            # This uses the NEW self.day_data (which is new_df).
+            # So it uses the FILE's sun position. This is what we want (Context Preservation).
+            for i in range(rows):
+                 self.update_row_safety(i, update_viz=(i==0))
                  
-            self.update_ui_from_row(self.current_idx)
-            QMessageBox.information(self, "Loaded", f"Loaded profile {name} (interpolated to current timeline).")
+            self.update_ui_from_row(0)
+            QMessageBox.information(self, "Loaded", f"Loaded profile {name} in exploration mode.")
             
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Load failed: {e}")
         finally:
+            self.blockSignals(False)
             QApplication.restoreOverrideCursor()
