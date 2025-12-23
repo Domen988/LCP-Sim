@@ -148,6 +148,21 @@ class StowRecorder(QWidget):
         
         act_l.addWidget(self.btn_copy_next)
         act_l.addLayout(h_interp)
+        
+        # Smooth Playback Controls
+        self.btn_play_smooth = QPushButton("▶ Play Selected (Smooth)")
+        self.btn_play_smooth.clicked.connect(self.play_smooth)
+        act_l.addWidget(self.btn_play_smooth)
+        
+        self.lbl_smooth = QLabel("Smooth Scrub:")
+        self.sl_smooth = QSlider(Qt.Orientation.Horizontal)
+        self.sl_smooth.setRange(0, 100)
+        self.sl_smooth.setEnabled(False)
+        self.sl_smooth.valueChanged.connect(self.on_smooth_slider)
+        
+        act_l.addWidget(self.lbl_smooth)
+        act_l.addWidget(self.sl_smooth)
+        
         gb_act.setLayout(act_l)
         l_layout.addWidget(gb_act)
         
@@ -465,6 +480,145 @@ class StowRecorder(QWidget):
             self.table.item(r, 4).setText(f"{az:.1f}")
             self.table.item(r, 5).setText(f"{el:.1f}")
             self.update_row_safety(r)
+            
+    def generate_smooth_frames(self):
+        """Generates interpolated frames between selected rows."""
+        rows = sorted(set(index.row() for index in self.table.selectedIndexes()))
+        if len(rows) < 2: 
+             QMessageBox.warning(self, "Selection", "Select at least 2 rows.")
+             return False
+             
+        self.smooth_frames = []
+        STEPS = 10 
+        
+        # Pre-calc date for context (optional, just for viz)
+        # We can iterate through the selection
+        for i in range(len(rows) - 1):
+             r1 = rows[i]
+             r2 = rows[i+1]
+             
+             # Get Data
+             t1 = self.table.item(r1, 0).text()
+             az1 = float(self.table.item(r1, 2).text())
+             el1 = float(self.table.item(r1, 3).text())
+             saz1 = float(self.table.item(r1, 4).text())
+             sel1 = float(self.table.item(r1, 5).text())
+
+             t2 = self.table.item(r2, 0).text() # Unused for lerp but good for debug
+             az2 = float(self.table.item(r2, 2).text())
+             el2 = float(self.table.item(r2, 3).text())
+             saz2 = float(self.table.item(r2, 4).text())
+             sel2 = float(self.table.item(r2, 5).text())
+             
+             # Interpolate
+             for j in range(STEPS):
+                  frac = j / STEPS
+                  
+                  # Shortest Path Interpolation for Azimuth
+                  # Diff range: -180 to 180
+                  d_az = (az2 - az1 + 180) % 360 - 180
+                  i_az = (az1 + d_az * frac) % 360
+                  
+                  i_el = el1 + (el2 - el1) * frac
+                  
+                  d_saz = (saz2 - saz1 + 180) % 360 - 180
+                  i_saz = (saz1 + d_saz * frac) % 360
+                  
+                  i_sel = sel1 + (sel2 - sel1) * frac
+                  
+                  self.smooth_frames.append({
+                       "sun_az": i_az,
+                       "sun_el": i_el,
+                       "stow_az": i_saz,
+                       "stow_el": i_sel,
+                       "label": f"Row {r1}->{r2} ({int(frac*100)}%)"
+                  })
+                  
+        # Append final frame (Exact last row)
+        last_r = rows[-1]
+        self.smooth_frames.append({
+             "sun_az": float(self.table.item(last_r, 2).text()),
+             "sun_el": float(self.table.item(last_r, 3).text()),
+             "stow_az": float(self.table.item(last_r, 4).text()),
+             "stow_el": float(self.table.item(last_r, 5).text()),
+             "label": f"Row {last_r} (End)"
+        })
+        
+        return True
+
+    def play_smooth(self):
+        if self.is_playing:
+             self.pause()
+             # If play smooth clicked while playing normal, switch?
+             # For simplicity, pause first.
+             
+        if not self.generate_smooth_frames(): return
+        
+        # Configure Slider
+        self.sl_smooth.setEnabled(True)
+        self.sl_smooth.blockSignals(True)
+        self.sl_smooth.setRange(0, len(self.smooth_frames) - 1)
+        self.sl_smooth.setValue(0)
+        self.sl_smooth.blockSignals(False)
+        
+        self.smooth_idx = 0
+        self.is_smooth_playing = True
+        self.btn_play_smooth.setText("⏸ Stop Smooth")
+        # Use faster timer?
+        self.timer.setInterval(30) # 30ms ~ 33fps
+        # Disconnect normal step
+        try: self.timer.timeout.disconnect(self.step_forward)
+        except: pass
+        self.timer.timeout.connect(self.step_smooth)
+        self.timer.start()
+        
+    def step_smooth(self):
+        if self.smooth_idx < len(self.smooth_frames) - 1:
+             self.smooth_idx += 1
+             self.sl_smooth.setValue(self.smooth_idx) # Triggers update_smooth_viz
+        else:
+             self.stop_smooth()
+             
+    def stop_smooth(self):
+        self.is_smooth_playing = False
+        self.timer.stop()
+        self.btn_play_smooth.setText("▶ Play Selected (Smooth)")
+        try: self.timer.timeout.disconnect(self.step_smooth)
+        except: pass
+        # Reconnect normal
+        self.timer.timeout.connect(self.step_forward)
+        self.timer.setInterval(100) # Reset to 10fps
+        
+    def on_smooth_slider(self, val):
+         self.smooth_idx = val
+         self.update_smooth_viz(val)
+         
+    def update_smooth_viz(self, idx):
+         if not hasattr(self, 'smooth_frames') or idx >= len(self.smooth_frames): return
+         
+         frame = self.smooth_frames[idx]
+         
+         # Calc Safety Realtime
+         # Use negative plant rotation
+         rot = -self.state.config.plant_rotation
+         
+         local_az = frame['sun_az'] - rot
+         local_stow_az = frame['stow_az'] - rot
+         
+         states, collision = self.kernel.solve_timestep(
+              local_az, frame['sun_el'], 
+              enable_safety=False, # Viz: Always Track/Stow as requested
+              stow_override=(local_stow_az, frame['stow_el'])
+         )
+         
+         is_safe = not collision
+         
+         # Update Labels (Optional: Reuse Teach Labels or separate?)
+         self.lbl_az.setText(f"Stow Az: {frame['stow_az']:.1f}° (Interpolated)")
+         self.lbl_el.setText(f"Stow El: {frame['stow_el']:.1f}°")
+         
+         # Emit Viz Update
+         self.preview_update.emit(frame['sun_az'], frame['sun_el'], is_safe, states)
             
     def play(self):
         self.is_playing = True
