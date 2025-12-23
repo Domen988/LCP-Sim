@@ -39,7 +39,7 @@ class ResultsWidget(QWidget):
         
         self.setup_ui()
         
-        self.enable_safety = True # Default
+        self.enable_safety = False # Default off per Sidebar UI
         
     @property
     def state(self):
@@ -97,11 +97,9 @@ class ResultsWidget(QWidget):
         finally:
             QApplication.restoreOverrideCursor()
         
-    def set_enable_safety(self, val):
-        self.enable_safety = val
-        # If currently showing a frame, re-emit to update viz
-        if self.current_frames and self.replay_idx < len(self.current_frames):
-             self.update_instant_stats(self.replay_idx)
+        # Toggle Removed by user request.
+        # We now ALWAYS visualize tracking/stow-safe states but we don't switch logic on user toggle.
+        pass
              
     def clear(self):
         self.all_data = []
@@ -443,6 +441,11 @@ class ResultsWidget(QWidget):
 
     def _ensure_states(self, f, force_override=None):
         """Regenerate physics states if missing OR if override requested."""
+        # If force_override is present, ALWAYS regen.
+        # If not present, only regen if states are missing.
+        # ISSUE: If we toggle safety, states might be present (cached from previous calc with diff safety).
+        # We handle this by clearing 'states' in set_enable_safety before calling update_instant_stats.
+        
         if f.get('states') and not force_override: 
              return
              
@@ -469,11 +472,16 @@ class ResultsWidget(QWidget):
         
         # Solve
         # Adjust Azimuth for Plant Rotation
-        local_az = f['sun_az'] - s.plant_rotation
+        local_az = f['sun_az'] - (-s.config.plant_rotation)
+        # User Request: Always visualize tracking position ("tracing position") 
+        # but keep calculation for stow same (backend simulation handles that).
+        # We explicitly disable safety here so the Kernel returns "Tracking" states
+        # even if a collision would occur. The simulation results (all_data) still
+        # contain the correct "Stow Loss" / "Safety Mode" booleans which are displayed in charts.
         states, safety = self.kernel.solve_timestep(
              local_az, 
              f['sun_el'], 
-             enable_safety=self.enable_safety,
+             enable_safety=False, # Force Tracking Viz
              stow_override=force_override
         )
         

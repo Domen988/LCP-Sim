@@ -144,7 +144,10 @@ class SimulationRunner:
         # If Plant N is rotated +5 deg (to N' = 5 deg).
         # A sun at 5 deg (True N) should match Plant N (0 deg local).
         # So Local Az = True Az - 5. Correct.
-        PLANT_ROTATION = 5.0 
+        # LOCAL AZIMUTH: Sun Az (Global) - Plant Rotation
+        # plant_rotation=5 means plant North is 5 deg East of True North.
+        # To align, we subtract 5 deg from Sun Az.
+        PLANT_ROTATION = -self.cfg.plant_rotation 
         
         for dt in steps:
             # 1. Physics

@@ -67,7 +67,7 @@ class MainWindow(QMainWindow):
         self.sidebar.cb_show_pivots.toggled.connect(self.viewport.set_show_pivots)
         self.sidebar.cb_show_rays.toggled.connect(self.viewport.set_show_rays)
         self.sidebar.cb_show_full.toggled.connect(self.viewport.set_show_full_plant)
-        self.sidebar.cb_stow.toggled.connect(self.results.set_enable_safety)
+        # self.sidebar.cb_stow.toggled.connect(self.results.set_enable_safety) # Toggle Removed
         self.sidebar.cb_show_tolerance.toggled.connect(self.viewport.set_show_tolerance)
         
         # 1. Sidebar -> Viewport (Live Param Update)
@@ -105,7 +105,7 @@ class MainWindow(QMainWindow):
         # This provides collision detection ("clash profile") and parity mixing
         dt = self.recorder.current_time # FAIL: Recorder no longer member of Main
         sun = self.recorder.solar.get_position(dt)
-        local_az = sun.azimuth - self.state.plant_rotation
+        local_az = sun.azimuth - self.state.config.plant_rotation
         
         # Solve
         print(f"DEBUG: Manual Override Az={az} El={el} Time={dt}")

@@ -253,9 +253,10 @@ class Sidebar(QWidget):
         self.set_stale()
 
     def init_sizing(self):
-        box = CollapsibleBox("Plant Sizing", expanded=False)
+        box = CollapsibleBox("Plant Config", expanded=False)
         form = QFormLayout()
         
+        # Sizing
         self.sb_rows = QSpinBox()
         self.sb_rows.setRange(1, 1000)
         self.sb_rows.setValue(self.state.rows)
@@ -268,9 +269,17 @@ class Sidebar(QWidget):
         
         self.lbl_total = QLabel(f"{self.state.rows * self.state.cols}")
         
+        # Rotation
+        self.sb_rotation = QDoubleSpinBox()
+        self.sb_rotation.setRange(-180.0, 180.0)
+        self.sb_rotation.setSingleStep(1.0)
+        self.sb_rotation.setValue(self.state.config.plant_rotation)
+        self.sb_rotation.valueChanged.connect(self.on_rotation_change)
+
         form.addRow("Rows", self.sb_rows)
         form.addRow("Cols", self.sb_cols)
         form.addRow("Total Panels:", self.lbl_total)
+        form.addRow("Plant Rotation (°)", self.sb_rotation)
         
         box.addLayout(form)
         self.layout.addWidget(box)
@@ -281,6 +290,11 @@ class Sidebar(QWidget):
         self.state.config.total_panels = self.state.rows * self.state.cols
         self.lbl_total.setText(str(self.state.config.total_panels))
         self.geometry_changed.emit()
+        self.set_stale()
+        
+    def on_rotation_change(self):
+        self.state.config.plant_rotation = self.sb_rotation.value()
+        self.geometry_changed.emit() # Triggers kernel regen in MainWindow
         self.set_stale()
 
     def init_sim_settings(self):
@@ -338,9 +352,7 @@ class Sidebar(QWidget):
          self.cb_show_full.setChecked(False)
          form.addRow(self.cb_show_full)
          
-         self.cb_stow = QCheckBox("Enable Stow Strategy")
-         self.cb_stow.setChecked(False)
-         form.addRow(self.cb_stow)
+         pass # Toggle removed by user request
 
          self.cb_show_tolerance = QCheckBox("Panels with Tolerance")
          self.cb_show_tolerance.setChecked(False)
@@ -398,9 +410,10 @@ class Sidebar(QWidget):
         self.sb_grid_pitch_y.blockSignals(True); self.sb_grid_pitch_y.setValue(c.grid_pitch_y); self.sb_grid_pitch_y.blockSignals(False)
         self.sb_tolerance.blockSignals(True); self.sb_tolerance.setValue(c.tolerance); self.sb_tolerance.blockSignals(False)
         
-        # Sizing
+        # Sizing / Config
         self.sb_rows.blockSignals(True); self.sb_rows.setValue(self.state.rows); self.sb_rows.blockSignals(False)
         self.sb_cols.blockSignals(True); self.sb_cols.setValue(self.state.cols); self.sb_cols.blockSignals(False)
+        self.sb_rotation.blockSignals(True); self.sb_rotation.setValue(c.plant_rotation); self.sb_rotation.blockSignals(False)
         self.lbl_total.setText(str(c.total_panels))
         
         # Sim Settings

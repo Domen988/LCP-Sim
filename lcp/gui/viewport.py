@@ -265,7 +265,7 @@ class PlantViewport(gl.GLViewWidget):
         pitch_y = s.config.grid_pitch_y
         
         # North Arrow 
-        theta_deg = -s.plant_rotation
+        theta_deg = -(-s.config.plant_rotation) # User requested negative rotation usage
         c_a = np.cos(np.radians(theta_deg))
         s_a = np.sin(np.radians(theta_deg))
         
@@ -367,7 +367,7 @@ class PlantViewport(gl.GLViewWidget):
         cv_unit, cf_unit = self.cyl_verts, self.cyl_faces
         
         # Local Tracking Logic
-        local_sun_az = eff_sun_az - s.plant_rotation
+        local_sun_az = eff_sun_az - (-s.config.plant_rotation)
         R_track = self._get_rotation_matrix(local_sun_az, 90.0 - eff_sun_el)
         
         is_kernel_mode = (states is not None and len(states) == 9)
