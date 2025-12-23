@@ -364,10 +364,11 @@ class StowRecorder(QWidget):
             sun_az = row_data['sun_az']
             sun_el = row_data['sun_el']
             
-            local_az = sun_az - self.state.plant_rotation
+            # Use negative plant rotation as per new coordinate system
+            local_az = sun_az - (-self.state.config.plant_rotation)
             
             # Stow Angle is GLOBAL (from user input). Kernel needs LOCAL for Override.
-            local_stow_az = stow_az - self.state.plant_rotation
+            local_stow_az = stow_az - (-self.state.config.plant_rotation)
             
             # Solve with kernel
             # solve_timestep returns (states, collision_detected)
