@@ -1,7 +1,7 @@
 
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QTabWidget, QTableWidget, 
                              QTableWidgetItem, QHeaderView, QPushButton, QSlider, QLabel, 
-                             QSplitter, QFrame, QGridLayout, QGroupBox)
+                             QSplitter, QFrame, QGridLayout, QGroupBox, QApplication)
 from PyQt6.QtCore import Qt, pyqtSignal, QTimer
 from PyQt6.QtGui import QColor, QFont
 import pyqtgraph as pg
@@ -12,6 +12,7 @@ from datetime import datetime
 # Physics Imports
 from lcp.physics.engine import InfiniteKernel, PanelState
 from lcp.gui.landscape_widget import AnnualLandscapeWidget
+from lcp.gui.recorder import StowRecorder
 from lcp.app.theme import Theme
 
 class ResultsWidget(QWidget):
@@ -36,11 +37,65 @@ class ResultsWidget(QWidget):
         self.timer.timeout.connect(self.next_frame)
         self.timer.setInterval(50) # 20 FPS
         
-        # UI Setup
         self.setup_ui()
         
-        
         self.enable_safety = True # Default
+        
+    @property
+    def state(self):
+        return self._state
+        
+    @state.setter
+    def state(self, val):
+        self._state = val
+        # Retrieve needed references for Recorder
+        # Initialize Recorder Tab now that we have State
+        if not hasattr(self, 'recorder') or self.recorder is None:
+             self.recorder = StowRecorder(self.state)
+             self.tabs.addTab(self.recorder, "Stow Recorder")
+             
+             # Ensure Kernel Exists
+             if not hasattr(self, 'kernel') or self.kernel is None:
+                  self.kernel = InfiniteKernel(self.state.geometry, self.state.config)
+                  
+             # Inject the Kernel into Recorder (We share the one from ResultsWidget)
+             self.recorder.set_kernel(self.kernel)
+             
+             # CONNECT SIGNAL: Recorder -> Viewport Update
+             # We need to bridge this signal to the outside (MainWindow)
+             # Let's define a new signal on ResultsWidget or reuse?
+             # We can define `recorder_update` signal on ResultsWidget and emit it
+             self.recorder.preview_update.connect(self.on_recorder_preview)
+
+    def on_recorder_preview(self, az, el, safety, states):
+         # Re-emit to MainWindow via existing signal?
+         # `replay_frame` signature: (float, float, bool, list)
+         # This matches!
+         self.replay_frame.emit(az, el, safety, states)
+         
+    def on_create_stow_profile(self):
+        # 1. Get Selected Day Data
+        if not self.current_day_data: return
+        
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        try:
+            # 2. Get Date string
+            if hasattr(self, 'selected_day_label'):
+                 date_str = self.selected_day_label
+            else:
+                 date_str = "Unknown"
+            
+            # 3. Switch Tab
+            self.tabs.setCurrentWidget(self.recorder)
+            
+            # 4. Load Data into Recorder
+            # Recorder expects DataFrame. current_day_data['frames'] is list of dicts.
+            frames = self.current_day_data.get('frames', [])
+            df = pd.DataFrame(frames)
+            
+            self.recorder.load_day_data(df, date_str)
+        finally:
+            QApplication.restoreOverrideCursor()
         
     def set_enable_safety(self, val):
         self.enable_safety = val
@@ -77,6 +132,36 @@ class ResultsWidget(QWidget):
         self.landscape = AnnualLandscapeWidget()
         self.tabs.addTab(self.landscape, "Annual Landscape")
         
+        # --- TAB 3: STOW RECORDER ---
+        # State will be injected later or taken from parent
+        # We need to construct it here but it relies on 'self.state' which is injected after init
+        # So we do lazy init or just construct it and injecting state later
+        self.recorder = None 
+        # We will initialize it in __init__ or after injected -> ResultsWidget init doesn't have state yet
+        # Actually Main Window does: self.results.state = self.state
+        # So we can create it here if we pass None, but Recorder needs state in init
+        # Let's create placeholder and init later? Or just move Results init to accept state?
+        # Current MainWindow code: self.results = ResultsWidget(); self.results.state = self.state
+        # We'll create it here with a dummy state or wait?
+        # Ideally we refactor MainWindow to pass state in constructor.
+        # For now, let's just initialize it with None and handle it in setup_ui if state exists??
+        # No, setup_ui is called in init.
+        # Let's add an explicit 'init_recorder' method called by MainWindow?
+        # OR: We modify ResultsWidget to lazily create the tab when state is available.
+        
+        # Simpler: MainWindow sets attribute `state` then we can use it?
+        # No, init runs first.
+        # Quick fix: Add `init_tabs` method called after injection?
+        # Or just accept state in constructor (best practice but changes interface).
+        # Let's just create it but it might crash if state accessed in init.
+        # Recorder __init__ does `self.state = state`.
+        # If we pass None, it crashes?
+        # Let's modify ResultsWidget to NOT create tabs in Init?
+        # No, tab_daily is created in setup_ui.
+        
+        # Let's go with: Create it in `set_state` or property setter.
+        
+        
     def setup_daily_tab(self):
         layout = QHBoxLayout(self.tab_daily)
         
@@ -103,6 +188,11 @@ class ResultsWidget(QWidget):
         period_layout.addWidget(self.lbl_period_eff, 2, 1)
         
         l_layout.addWidget(self.grp_period)
+        
+        # Create Stow Profile Button
+        self.btn_create_stow = QPushButton("Create Stow Profile for Selected Day")
+        self.btn_create_stow.clicked.connect(self.on_create_stow_profile)
+        l_layout.addWidget(self.btn_create_stow)
         
         # Table
         self.table = QTableWidget()
@@ -257,6 +347,10 @@ class ResultsWidget(QWidget):
         idx = rows[0].row()
         
         self.current_day_data = self.all_data[idx]
+        # Store Date String for Recorder
+        s = self.current_day_data['summary'] 
+        self.selected_day_label = s['date'].strftime("%Y-%m-%d")
+        
         self.load_day_into_plot(self.current_day_data)
         
     def load_day_into_plot(self, day_data):
@@ -375,6 +469,7 @@ class ResultsWidget(QWidget):
         
         f['states'] = states
         f['safety'] = safety 
+        print(f"DEBUG: ResultsWidget REGEN STATES. Override={force_override} Safety={safety}") 
         
     def update_instant_stats(self, idx):
         if not self.current_frames or idx >= len(self.current_frames): return
@@ -386,6 +481,7 @@ class ResultsWidget(QWidget):
         override = None
         if hasattr(self, 'state') and self.state.stow_profile:
              override = self.state.stow_profile.get_position_at(f['time'])
+             print(f"DEBUG: ResultsWidget Time={f['time']} Override={override} ProfileLen={len(self.state.stow_profile.keyframes)}")
              
         # Check/Regen States
         if hasattr(self, 'state'):

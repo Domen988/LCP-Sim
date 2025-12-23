@@ -82,6 +82,15 @@ class PlantViewport(gl.GLViewWidget):
         )
         self.addItem(self.panel_shadow_mesh)
         
+        # 4a. Panel Edge Mesh (Thick Purple)
+        self.edge_mesh = gl.GLMeshItem(
+            meshdata=None,
+            smooth=False,
+            color=(0.6, 0.0, 0.8, 1), 
+            glOptions='opaque'
+        )
+        self.addItem(self.edge_mesh)
+        
         # 5. Sunrays
         self.rays_sun = gl.GLLinePlotItem(width=3, color=(1.0, 0.8, 0.0, 1), mode='lines') 
         self.addItem(self.rays_sun)
@@ -285,6 +294,16 @@ class PlantViewport(gl.GLViewWidget):
         # Generate Effective Box
         current_verts, current_faces = self._create_box_verts(eff_w, eff_l, eff_t)
         
+        # Generate Edge verts (Thick Purple Line at Top)
+        # User requested "other side" -> -eff_l/2 
+        # "Top glass edge" -> z = +eff_t/2
+        edge_th = 0.05 # 5cm thickness
+        edge_verts, edge_faces = self._create_box_verts(eff_w, edge_th, edge_th)
+        
+        # Shift to Top Edge of Glass (-Y edge, +Z face)
+        edge_shift = np.array([0, -eff_l/2.0, eff_t/2.0]) 
+        edge_verts = edge_verts + edge_shift
+        
         # Culling / View Mode Logic
         if not self.show_full_plant:
              # Representative 3x3 View
@@ -314,8 +333,11 @@ class PlantViewport(gl.GLViewWidget):
         cyl_verts_list = []
         cyl_faces_list = []
         ray_pts_sun_list = []
+        edge_verts_list = []
+        edge_faces_list = []
         
         v_idx = 0
+        e_idx = 0
         p_idx = 0
         sh_idx = 0
         cyl_idx = 0
@@ -325,6 +347,7 @@ class PlantViewport(gl.GLViewWidget):
         c_edge = (0.8, 0.8, 0.8, 1)
         c_stow = (1.0, 0.6, 0.0, 1)
         c_clash = (1.0, 0.0, 0.0, 1)
+        c_purple = (0.6, 0.0, 0.8, 1)
         
         offset_vec = np.array(s.geometry.pivot_offset)
         pv = self.ico_verts
@@ -435,6 +458,14 @@ class PlantViewport(gl.GLViewWidget):
                      all_colors.append(color if k in [2,3] else c_edge)
                 v_idx += 8
                 
+                # 1b. Edge (Purple)
+                v_ed_shifted = edge_verts + offset_vec
+                v_ed_rot = v_ed_shifted @ R.T
+                v_ed_final = v_ed_rot + pos
+                edge_verts_list.append(v_ed_final)
+                edge_faces_list.append(edge_faces + e_idx)
+                e_idx += 8
+                
                 # 2. Pivot
                 if self.show_pivots:
                      pivot_verts.append(pv + pos)
@@ -536,6 +567,16 @@ class PlantViewport(gl.GLViewWidget):
             self.pivot_mesh.setVisible(True)
         else:
             self.pivot_mesh.setVisible(False)
+             
+        # Update Edge Mesh
+        if edge_verts_list:
+            ev = np.vstack(edge_verts_list)
+            ef = np.vstack(edge_faces_list)
+            md_edge = gl.MeshData(vertexes=ev, faces=ef)
+            self.edge_mesh.setMeshData(meshdata=md_edge)
+            self.edge_mesh.setVisible(True)
+        else:
+            self.edge_mesh.setVisible(False)
             
         if sh_verts:
             self.panel_shadow_mesh.setMeshData(vertexes=np.array(sh_verts), faces=np.array(sh_faces))

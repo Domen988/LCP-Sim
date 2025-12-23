@@ -59,11 +59,7 @@ class MainWindow(QMainWindow):
         self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, dock_right)
         
         # C. BOTTOM: Stow Recorder
-        dock_bot = QDockWidget("Stow Recorder", self)
-        dock_bot.setAllowedAreas(Qt.DockWidgetArea.BottomDockWidgetArea)
-        self.recorder = StowRecorder(self.state)
-        dock_bot.setWidget(self.recorder)
-        self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, dock_bot)
+        # (REMOVED - integrated into ResultsWidget)
         
         # --- CONNECTIONS ---
         
@@ -87,9 +83,8 @@ class MainWindow(QMainWindow):
         self.sidebar.load_requested.connect(self.on_load_finished)
         
         # 3. Recorder -> Viewport (Animation/Manual)
-        # 3. Recorder -> Viewport (Animation/Manual)
-        self.results.time_changed.connect(self.recorder.set_current_time)
-        self.recorder.manual_override.connect(self.on_manual_override)
+        # Note: Recorder is now inside ResultsWidget. We need to expose its signal.
+        # This will be wired up after ResultsWidget is fully initialized or via a new signal on ResultsWidget proxy
         
         # 4. Init Teach Kernel (For Manual Mode Physics)
         self.teach_kernel = InfiniteKernel(self.state.geometry, self.state.config)
@@ -99,14 +94,21 @@ class MainWindow(QMainWindow):
         # Re-init kernel on geometry change
         self.teach_kernel = InfiniteKernel(self.state.geometry, self.state.config)
         
-    def on_manual_override(self, az, el):
+    def on_manual_override(self, sun_az, sun_el, safety, states):
+        # Recorder now calculates physics internally and just asks for visualization
+        # so this method simplifies to just pass-through to viewport
+        self.viewport.update_from_frame(sun_az, sun_el, safety, states)
+
+    # Legacy method signature was (az, el). Keeping for reference but unused mainly:
+    def _legacy_manual_override(self, az, el):
         # Use Teach Kernel to solve state with override
         # This provides collision detection ("clash profile") and parity mixing
-        dt = self.recorder.current_time
+        dt = self.recorder.current_time # FAIL: Recorder no longer member of Main
         sun = self.recorder.solar.get_position(dt)
         local_az = sun.azimuth - self.state.plant_rotation
         
         # Solve
+        print(f"DEBUG: Manual Override Az={az} El={el} Time={dt}")
         states, safety = self.teach_kernel.solve_timestep(
              local_az, sun.elevation, 
              enable_safety=True, 
@@ -114,7 +116,9 @@ class MainWindow(QMainWindow):
         )
         
         # Update Viewport
-        self.viewport.update_from_frame(sun.azimuth, sun.elevation, safety, states)
+        # Update Viewport
+        # print(f"DEBUG: Updating Viewport from Manual Override")
+        self.viewport.update_from_frame(sun_az, sun_el, safety, states)
         
     def start_simulation(self):
         # Disable Run Button
