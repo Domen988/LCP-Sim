@@ -2,7 +2,7 @@
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel, QSlider, 
                              QPushButton, QGroupBox, QTableWidget, QTableWidgetItem, 
                              QHeaderView, QSplitter, QLineEdit, QComboBox, QMessageBox, 
-                             QAbstractItemView, QFrame, QSizePolicy, QFileDialog, QApplication)
+                             QAbstractItemView, QFrame, QSizePolicy, QFileDialog, QApplication, QMenu)
 from PyQt6.QtCore import Qt, pyqtSignal, QTimer
 from PyQt6.QtGui import QFont, QColor
 import pandas as pd
@@ -258,6 +258,8 @@ class StowRecorder(QWidget):
         self.table.setHorizontalHeaderLabels(cols)
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.table.customContextMenuRequested.connect(self.show_context_menu)
         self.table.cellChanged.connect(self.on_table_edit)
         self.table.selectionModel().selectionChanged.connect(self.on_table_select)
         
@@ -435,6 +437,48 @@ class StowRecorder(QWidget):
     def on_table_edit(self, row, col):
         if col in [4, 5, 6, 7]:
             self.update_ui_from_row(row)
+
+    def show_context_menu(self, position):
+        menu = QMenu()
+        copy_action = menu.addAction("Copy Selection")
+        action = menu.exec(self.table.viewport().mapToGlobal(position))
+        
+        if action == copy_action:
+            self.copy_selection_to_clipboard()
+
+    def copy_selection_to_clipboard(self):
+        selection = self.table.selectedRanges()
+        if not selection: return
+        
+        # Get bounds of selection
+        # QTableWidget selection can be multiple separate ranges, but typically users 
+        # drag-select a contiguous block. We'll handle multiple ranges by concatenating?
+        # Or just take top-left to bottom-right of all selected items.
+        
+        # Simpler approach: iterate all selected items and sort them by row/col
+        indexes = self.table.selectedIndexes()
+        if not indexes: return
+        
+        rows = sorted(set(index.row() for index in indexes))
+        cols = sorted(set(index.column() for index in indexes))
+        
+        # Create CSV/TSV string
+        # Use TSV for Excel compatibility
+        text_data = ""
+        
+        # Header (Optional? Maybe skip header for copy-paste inside data)
+        # Usually users want just data.
+        
+        for r in rows:
+            row_data = []
+            for c in cols:
+                item = self.table.item(r, c)
+                txt = item.text() if item else ""
+                row_data.append(txt)
+            text_data += "\t".join(row_data) + "\n"
+            
+        QApplication.clipboard().setText(text_data)
+        # QMessageBox.information(self, "Copied", "Selection copied to clipboard.") # Optional feedback (annoying?)
             
     def update_row_safety(self, idx, update_viz=True):
         if not self.kernel: return

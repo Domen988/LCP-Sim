@@ -1,6 +1,6 @@
 {
   "metadata": {
-    "date_label": "Date: Date: 2025-01-01",
+    "date_label": "Date: Date: Date: Date: 2025-01-01",
     "geometry": {
       "width": 1.46,
       "length": 1.46,
@@ -1285,7 +1285,7 @@
       "sim_safety": "\u2705",
       "sun_az": 67.1,
       "sun_el": 83.0,
-      "inactive_az": 37.8,
+      "inactive_az": 22.1,
       "inactive_el": 15.0,
       "active_az": 67.1,
       "active_el": 83.0
@@ -1295,7 +1295,7 @@
       "sim_safety": "\u2705",
       "sun_az": 64.4,
       "sun_el": 83.6,
-      "inactive_az": 18.9,
+      "inactive_az": 24.3,
       "inactive_el": 15.0,
       "active_az": 64.4,
       "active_el": 83.6
@@ -1305,7 +1305,7 @@
       "sim_safety": "\u2705",
       "sun_az": 61.1,
       "sun_el": 84.2,
-      "inactive_az": 21.0,
+      "inactive_az": 27.0,
       "inactive_el": 15.0,
       "active_az": 61.1,
       "active_el": 84.2
@@ -1315,7 +1315,7 @@
       "sim_safety": "\u2705",
       "sun_az": 57.2,
       "sun_el": 84.8,
-      "inactive_az": 25.2,
+      "inactive_az": 30.3,
       "inactive_el": 15.0,
       "active_az": 57.2,
       "active_el": 84.8
@@ -1325,7 +1325,7 @@
       "sim_safety": "\u274c",
       "sun_az": 52.4,
       "sun_el": 85.3,
-      "inactive_az": 29.4,
+      "inactive_az": 34.2,
       "inactive_el": 15.0,
       "active_az": 52.4,
       "active_el": 85.3
@@ -1335,7 +1335,7 @@
       "sim_safety": "\u274c",
       "sun_az": 46.4,
       "sun_el": 85.8,
-      "inactive_az": 34.6,
+      "inactive_az": 39.0,
       "inactive_el": 15.0,
       "active_az": 46.4,
       "active_el": 85.8
@@ -1345,7 +1345,7 @@
       "sim_safety": "\u274c",
       "sun_az": 38.8,
       "sun_el": 86.3,
-      "inactive_az": 42.0,
+      "inactive_az": 45.0,
       "inactive_el": 15.0,
       "active_az": 38.8,
       "active_el": 86.3
@@ -1355,7 +1355,7 @@
       "sim_safety": "\u274c",
       "sun_az": 29.3,
       "sun_el": 86.7,
-      "inactive_az": 50.4,
+      "inactive_az": 52.6,
       "inactive_el": 15.0,
       "active_az": 29.3,
       "active_el": 86.7
@@ -1365,7 +1365,7 @@
       "sim_safety": "\u2705",
       "sun_az": 17.8,
       "sun_el": 87.0,
-      "inactive_az": 59.8,
+      "inactive_az": 62.1,
       "inactive_el": 15.0,
       "active_az": 17.8,
       "active_el": 87.0
@@ -1395,8 +1395,8 @@
       "sim_safety": "\u2705",
       "sun_az": 338.5,
       "sun_el": 86.9,
-      "inactive_az": 283.4,
-      "inactive_el": 15.0,
+      "inactive_az": 338.5,
+      "inactive_el": 86.9,
       "active_az": 338.5,
       "active_el": 86.9
     },
@@ -1405,7 +1405,7 @@
       "sim_safety": "\u2705",
       "sun_az": 327.6,
       "sun_el": 86.6,
-      "inactive_az": 291.8,
+      "inactive_az": 282.6,
       "inactive_el": 15.0,
       "active_az": 327.6,
       "active_el": 86.6
@@ -1415,7 +1415,7 @@
       "sim_safety": "\u274c",
       "sun_az": 318.8,
       "sun_el": 86.2,
-      "inactive_az": 302.3,
+      "inactive_az": 293.5,
       "inactive_el": 15.0,
       "active_az": 318.8,
       "active_el": 86.2
@@ -1425,7 +1425,7 @@
       "sim_safety": "\u274c",
       "sun_az": 311.7,
       "sun_el": 85.7,
-      "inactive_az": 307.5,
+      "inactive_az": 302.3,
       "inactive_el": 15.0,
       "active_az": 311.7,
       "active_el": 85.7
@@ -1435,7 +1435,7 @@
       "sim_safety": "\u274c",
       "sun_az": 306.1,
       "sun_el": 85.2,
-      "inactive_az": 314.9,
+      "inactive_az": 309.4,
       "inactive_el": 15.0,
       "active_az": 306.1,
       "active_el": 85.2
@@ -1445,7 +1445,7 @@
       "sim_safety": "\u274c",
       "sun_az": 301.5,
       "sun_el": 84.6,
-      "inactive_az": 319.1,
+      "inactive_az": 315.0,
       "inactive_el": 15.0,
       "active_az": 301.5,
       "active_el": 84.6
@@ -1455,7 +1455,7 @@
       "sim_safety": "\u274c",
       "sun_az": 297.9,
       "sun_el": 84.0,
-      "inactive_az": 319.1,
+      "inactive_az": 319.6,
       "inactive_el": 15.0,
       "active_az": 297.9,
       "active_el": 84.0
@@ -1465,7 +1465,7 @@
       "sim_safety": "\u274c",
       "sun_az": 294.8,
       "sun_el": 83.4,
-      "inactive_az": 323.3,
+      "inactive_az": 323.2,
       "inactive_el": 15.0,
       "active_az": 294.8,
       "active_el": 83.4
@@ -1475,7 +1475,7 @@
       "sim_safety": "\u2705",
       "sun_az": 292.3,
       "sun_el": 82.8,
-      "inactive_az": 325.4,
+      "inactive_az": 326.3,
       "inactive_el": 15.0,
       "active_az": 292.3,
       "active_el": 82.8
@@ -1485,8 +1485,8 @@
       "sim_safety": "\u2705",
       "sun_az": 290.1,
       "sun_el": 82.2,
-      "inactive_az": 325.4,
-      "inactive_el": 15.0,
+      "inactive_az": 290.1,
+      "inactive_el": 82.2,
       "active_az": 290.1,
       "active_el": 82.2
     },
@@ -1495,8 +1495,8 @@
       "sim_safety": "\u2705",
       "sun_az": 288.2,
       "sun_el": 81.5,
-      "inactive_az": 327.5,
-      "inactive_el": 15.0,
+      "inactive_az": 288.2,
+      "inactive_el": 81.5,
       "active_az": 288.2,
       "active_el": 81.5
     },
@@ -1505,8 +1505,8 @@
       "sim_safety": "\u2705",
       "sun_az": 286.6,
       "sun_el": 80.9,
-      "inactive_az": 330.6,
-      "inactive_el": 15.0,
+      "inactive_az": 286.6,
+      "inactive_el": 80.9,
       "active_az": 286.6,
       "active_el": 80.9
     },
@@ -1515,8 +1515,8 @@
       "sim_safety": "\u2705",
       "sun_az": 285.1,
       "sun_el": 80.2,
-      "inactive_az": 330.6,
-      "inactive_el": 15.0,
+      "inactive_az": 285.1,
+      "inactive_el": 80.2,
       "active_az": 285.1,
       "active_el": 80.2
     },
@@ -1525,8 +1525,8 @@
       "sim_safety": "\u2705",
       "sun_az": 283.9,
       "sun_el": 79.6,
-      "inactive_az": 332.7,
-      "inactive_el": 15.0,
+      "inactive_az": 283.9,
+      "inactive_el": 79.6,
       "active_az": 283.9,
       "active_el": 79.6
     },
