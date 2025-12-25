@@ -18,7 +18,7 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("LCP-Sim Desktop v1.0")
-        self.resize(1600, 900)
+        self.resize(1280, 800)
         self.showMaximized()
         
         # Icon

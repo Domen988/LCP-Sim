@@ -2,7 +2,7 @@
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel, QSlider, 
                              QPushButton, QGroupBox, QTableWidget, QTableWidgetItem, 
                              QHeaderView, QSplitter, QLineEdit, QComboBox, QMessageBox, 
-                             QAbstractItemView, QFrame, QSizePolicy, QFileDialog, QApplication, QMenu)
+                             QAbstractItemView, QFrame, QSizePolicy, QFileDialog, QApplication, QMenu, QScrollArea)
 from PyQt6.QtCore import Qt, pyqtSignal, QTimer
 from PyQt6.QtGui import QFont, QColor
 import pandas as pd
@@ -246,7 +246,13 @@ class StowRecorder(QWidget):
         l_layout.addWidget(gb_file)
         
         l_layout.addStretch()
-        splitter.addWidget(left_widget)
+        
+        # Wrap Controls in Scroll Area
+        scroll_left = QScrollArea()
+        scroll_left.setWidget(left_widget)
+        scroll_left.setWidgetResizable(True)
+        scroll_left.setFrameShape(QFrame.Shape.NoFrame)
+        splitter.addWidget(scroll_left)
         
         # --- RIGHT: TABLE ---
         self.table = QTableWidget()
