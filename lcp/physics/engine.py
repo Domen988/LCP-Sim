@@ -79,9 +79,13 @@ class InfiniteKernel:
         # Broadcasting would be faster but loop is small (max 8)
         return [(current_pos + off, current_rot) for off in offsets]
 
-    def solve_timestep(self, sun_az: float, sun_el: float, enable_safety: bool = True, stow_override: Optional[Tuple[float, float]] = None) -> Tuple[List[PanelState], bool]:
+    def solve_timestep(self, sun_az: float, sun_el: float, enable_safety: bool = True, 
+                       inactive_override: Optional[Tuple[float, float]] = None,
+                       active_override: Optional[Tuple[float, float]] = None) -> Tuple[List[PanelState], bool]:
         """
         Solves the state of the 3x3 kernel for a given sun position.
+        inactive_override: (az, el) for Even panels (Stow Group).
+        active_override: (az, el) for Odd panels (Active/Tracking Group).
         """
         # 1. Calculate Ideal Tracking Orientation
         if sun_el <= 0:
@@ -89,46 +93,50 @@ class InfiniteKernel:
         else:
             target_rot = self.rig.get_orientation(sun_az, sun_el)
             
-        # Prepare Manual Rotation if needed
-        manual_rot = None
-        if stow_override:
-            ov_az, ov_el = stow_override
-            manual_rot = self.rig.get_orientation(ov_az, ov_el)
+        # Prepare Manual Rotations
+        manual_inactive_rot = None
+        if inactive_override:
+            manual_inactive_rot = self.rig.get_orientation(*inactive_override)
+            
+        manual_active_rot = None
+        if active_override:
+            manual_active_rot = self.rig.get_orientation(*active_override)
 
         # 2. Check Collisions
         collision_detected = False
         idx_list = list(self.pivots.keys())
         
         # Determine rotations for collision check
-        # If Override: explicit map. Else: Uniform target_rot.
         rot_map = {}
-        if stow_override:
-            for idx in idx_list:
-                r, c = idx
-                if (r + c) % 2 == 0:
-                    rot_map[idx] = manual_rot
+        for idx in idx_list:
+            r, c = idx
+            is_stow_group = (r + c) % 2 == 0
+            
+            if is_stow_group:
+                if manual_inactive_rot is not None:
+                    rot_map[idx] = manual_inactive_rot
                 else:
-                    rot_map[idx] = target_rot
-        
+                    rot_map[idx] = target_rot # Default to Track if no override
+            else:
+                # Active Group
+                if manual_active_rot is not None:
+                    rot_map[idx] = manual_active_rot
+                else:
+                     rot_map[idx] = target_rot
+
         for i in range(len(idx_list)):
             for j in range(i + 1, len(idx_list)):
                 idx_i = idx_list[i]
                 idx_j = idx_list[j]
                 
-                if stow_override:
-                    # Heterogeneous Check
-                    r_i = rot_map[idx_i]
-                    r_j = rot_map[idx_j]
-                    # Optimization: Use fast path if matrices are identical
-                    # Note: We use 'is' check if they are same object from get_orientation cache or local var
-                    # but here they are numpy arrays.
-                    if np.array_equal(r_i, r_j): 
-                        c_res = self.collider.check_clash(self.pivots[idx_i], self.pivots[idx_j], r_i, rot_b=None)
-                    else:
-                        c_res = self.collider.check_clash(self.pivots[idx_i], self.pivots[idx_j], r_i, rot_b=r_j)
+                r_i = rot_map[idx_i]
+                r_j = rot_map[idx_j]
+                
+                # Check Clash
+                if np.array_equal(r_i, r_j): 
+                    c_res = self.collider.check_clash(self.pivots[idx_i], self.pivots[idx_j], r_i, rot_b=None)
                 else:
-                    # Homogeneous (Standard) Check
-                    c_res = self.collider.check_clash(self.pivots[idx_i], self.pivots[idx_j], target_rot)
+                    c_res = self.collider.check_clash(self.pivots[idx_i], self.pivots[idx_j], r_i, rot_b=r_j)
                 
                 if c_res:
                     collision_detected = True
@@ -153,22 +161,30 @@ class InfiniteKernel:
         for r in range(3):
             for c in range(3):
                 idx = (r,c)
-                is_even = ((r + c) % 2 == 0)
+                is_stow_group = ((r + c) % 2 == 0)
                 
-                if stow_override:
-                    # Specific Manual Logic
-                    if is_even:
-                        mode = "MANUAL_STOW"
-                        rot = manual_rot
-                    else:
-                        mode = "TRACKING"
-                        rot = target_rot
-                elif collision_detected and is_even and enable_safety:
-                    mode = "STOW"
-                    rot = stow_rot
+                # Logic Priority:
+                # 1. Manual Override (Active or Inactive)
+                # 2. Safety Stow (if collision & safety on & is stow group)
+                # 3. Tracking
+                
+                rot = target_rot
+                mode = "TRACKING"
+                
+                if is_stow_group:
+                    if manual_inactive_rot is not None:
+                         mode = "MANUAL_INACTIVE"
+                         rot = manual_inactive_rot
+                    elif collision_detected and enable_safety:
+                         mode = "STOW"
+                         rot = stow_rot
                 else:
-                    mode = "TRACKING"
-                    rot = target_rot
+                    # Active Group
+                    if manual_active_rot is not None:
+                         mode = "MANUAL_ACTIVE"
+                         rot = manual_active_rot
+                    # Even if collision, Active group tracks (unless we define Active Safety?)
+                    # Current definitions say Active tracks sun always or manually overriden.
                 
                 panel_kinematics[idx] = (self.pivots[idx], rot, mode)
         
@@ -182,13 +198,6 @@ class InfiniteKernel:
                 
                 # Use Virtual Neighbors for infinite plant emulation
                 v_neighbors = self._get_virtual_neighbors(r, c, pos, rot)
-                
-                # Shadow Loss
-                # In Override mode, we still want to see Shadows if possible.
-                # But if collision, logic usually skips shadows.
-                # Spec says: "Status Banner: RED CLASH... GREEN SAFE".
-                # It doesn't explicitly ask for Shadow Power during Teach Mode.
-                # We can keep current logic: IF collision -> 0 shadow calc.
                 
                 if collision_detected:
                     shad_loss = 0.0

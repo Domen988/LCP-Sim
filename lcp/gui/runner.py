@@ -38,9 +38,21 @@ class SimulationWorker(QThread):
             # Or assume we replicate dashboard loop logic for fine-grained control?
             # Replicating gives us Progress Bar control.
             
-            # Assuming CSV is in CWD as per dashboard.py
+            # Define resource_path helper inside run or globally
+            import sys
+            import os
+            def resource_path(relative_path):
+                """ Get absolute path to resource, works for dev and for PyInstaller """
+                try:
+                    # PyInstaller creates a temp folder and stores path in _MEIPASS
+                    base_path = sys._MEIPASS
+                except Exception:
+                    base_path = os.path.abspath(".")
+                return os.path.join(base_path, relative_path)
+
+            # Assuming CSV is in CWD as per dashboard.py, or at root of bundle
             # TODO: Make this configurable in AppState
-            csv_path = "Koster direct normal irradiance_Wh per square meter.csv"
+            csv_path = resource_path("Koster direct normal irradiance_Wh per square meter.csv")
             runner = SimulationRunner(csv_path)
             # Apply Config
             geo = self.state.geometry

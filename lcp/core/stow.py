@@ -9,22 +9,53 @@ from datetime import datetime
 @dataclass
 class Keyframe:
     timestamp: datetime
-    az: float
-    el: float
+    # Inactive Group (Stow)
+    inactive_az: float
+    inactive_el: float
+    # Active Group (Tracking)
+    active_az: float
+    active_el: float
+    # Reference Sun Position (for Reset)
+    sun_az: float
+    sun_el: float
 
     def to_dict(self):
         return {
             "timestamp": self.timestamp.isoformat(),
-            "az": self.az,
-            "el": self.el
+            "inactive_az": self.inactive_az,
+            "inactive_el": self.inactive_el,
+            "active_az": self.active_az,
+            "active_el": self.active_el,
+            "sun_az": self.sun_az,
+            "sun_el": self.sun_el
         }
 
     @staticmethod
     def from_dict(data):
+        # Backward Compatibility
+        if "az" in data:
+            # Old format: az/el -> inactive_az/inactive_el
+            # active -> 0 (or strictly speaking we should maybe try to estimate, 
+            # but 0 ensures it's explicit "unknown/neutral"). 
+            # Sun pos -> 0
+            return Keyframe(
+                timestamp=datetime.fromisoformat(data["timestamp"]),
+                inactive_az=data["az"],
+                inactive_el=data["el"],
+                active_az=0.0,
+                active_el=0.0,
+                sun_az=0.0,
+                sun_el=0.0
+            )
+            
         return Keyframe(
             timestamp=datetime.fromisoformat(data["timestamp"]),
-            az=data["az"],
-            el=data["el"]
+            inactive_az=data.get("inactive_az", 0.0),
+            inactive_el=data.get("inactive_el", 0.0),
+            active_az=data.get("active_az", 0.0),
+            active_el=data.get("active_el", 0.0),
+            sun_az=data.get("sun_az", 0.0),
+            sun_el=data.get("sun_el", 0.0)
         )
 
 class StowProfile:
@@ -37,17 +68,24 @@ class StowProfile:
         """Ensures keyframes are sorted by timestamp."""
         self.keyframes.sort(key=lambda k: k.timestamp)
 
-    def add_keyframe(self, timestamp: datetime, az: float, el: float):
+    def add_keyframe(self, timestamp: datetime, 
+                     inactive_az: float, inactive_el: float,
+                     active_az: float, active_el: float,
+                     sun_az: float, sun_el: float):
         """Adds or updates a keyframe at the given timestamp."""
         # Check if keyframe exists at exact time (rare but possible)
         for k in self.keyframes:
             if k.timestamp == timestamp:
-                k.az = az
-                k.el = el
+                k.inactive_az = inactive_az
+                k.inactive_el = inactive_el
+                k.active_az = active_az
+                k.active_el = active_el
+                k.sun_az = sun_az
+                k.sun_el = sun_el
                 return
         
         # New keyframe
-        self.keyframes.append(Keyframe(timestamp, az, el))
+        self.keyframes.append(Keyframe(timestamp, inactive_az, inactive_el, active_az, active_el, sun_az, sun_el))
         self.sort_keyframes()
 
     def remove_keyframe(self, index: int):
@@ -55,12 +93,15 @@ class StowProfile:
         if 0 <= index < len(self.keyframes):
             self.keyframes.pop(index)
 
-    def get_position_at(self, query_time: datetime) -> Optional[Tuple[float, float]]:
+    def get_position_at(self, query_time: datetime) -> Optional[Tuple[float, float, float, float]]:
         """
-        Calculates interpolated (az, el) at query_time.
+        Calculates interpolated (inactive_az, inactive_el, active_az, active_el) at query_time.
         Returns None if no keyframes exist.
         Returns nearest keyframe if outside range.
         Perfoms Linear Interpolation between two nearest keyframes.
+        
+        Note: We do NOT interpolate Sun Position as it's just a reference for that specific keyframe.
+        The caller usually knows the current sun position if they need it.
         """
         if not self.keyframes:
             return None
@@ -68,10 +109,10 @@ class StowProfile:
         # 1. Check Bounds
         if query_time <= self.keyframes[0].timestamp:
             k = self.keyframes[0]
-            return (k.az, k.el)
+            return (k.inactive_az, k.inactive_el, k.active_az, k.active_el)
         if query_time >= self.keyframes[-1].timestamp:
             k = self.keyframes[-1]
-            return (k.az, k.el)
+            return (k.inactive_az, k.inactive_el, k.active_az, k.active_el)
 
         # 2. Find Neighbors (bisect)
         # We want the index where query_time would be inserted
@@ -87,7 +128,7 @@ class StowProfile:
         # Total duration between frames
         total_sec = (k_next.timestamp - k_prev.timestamp).total_seconds()
         if total_sec == 0:
-            return (k_prev.az, k_prev.el)
+            return (k_prev.inactive_az, k_prev.inactive_el, k_prev.active_az, k_prev.active_el)
 
         elapsed_sec = (query_time - k_prev.timestamp).total_seconds()
         alpha = elapsed_sec / total_sec
@@ -98,10 +139,13 @@ class StowProfile:
         # or we accept linear transit through non-optimal path.
         # Given the "Manual" nature, we assume WYSIWYG linear mixing.
         
-        az = k_prev.az + alpha * (k_next.az - k_prev.az)
-        el = k_prev.el + alpha * (k_next.el - k_prev.el)
+        i_az = k_prev.inactive_az + alpha * (k_next.inactive_az - k_prev.inactive_az)
+        i_el = k_prev.inactive_el + alpha * (k_next.inactive_el - k_prev.inactive_el)
+        
+        a_az = k_prev.active_az + alpha * (k_next.active_az - k_prev.active_az)
+        a_el = k_prev.active_el + alpha * (k_next.active_el - k_prev.active_el)
 
-        return (az, el)
+        return (i_az, i_el, a_az, a_el)
 
     def save(self, filepath: str):
         data = {

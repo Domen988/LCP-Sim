@@ -45,8 +45,17 @@ class StowRecorder(QWidget):
         self.setup_ui()
 
         # Set default profile folder and refresh
-        app_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        # Set default profile folder and refresh
+        import sys
+        if getattr(sys, 'frozen', False):
+            # If frozen, usage executable directory (external)
+            app_root = os.path.dirname(sys.executable)
+        else:
+            # If dev, use project root relative to this file
+            app_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+            
         default_profile_folder = os.path.join(app_root, "saved_stow_profiles")
+        
         if not os.path.exists(default_profile_folder):
             try:
                 os.makedirs(default_profile_folder)
@@ -108,30 +117,61 @@ class StowRecorder(QWidget):
         gb_time.setLayout(time_l)
         l_layout.addWidget(gb_time)
         
-        # 3. Teach Pendant (Stow Sliders)
-        gb_teach = QGroupBox("Teach Position")
+        # 3. Teach INACTIVE (Stow Group)
+        gb_teach_inaz = QGroupBox("Teach Inactive")
         teach_l = QVBoxLayout()
         
         # Azimuth
-        self.lbl_az = QLabel("Stow Az: 0.0°")
-        self.sl_az = QSlider(Qt.Orientation.Horizontal)
-        self.sl_az.setRange(0, 3600) # 0 to 360
-        self.sl_az.valueChanged.connect(self.on_teach_change)
+        self.lbl_in_az = QLabel("Inactive Az: 0.0°")
+        self.sl_in_az = QSlider(Qt.Orientation.Horizontal)
+        self.sl_in_az.setRange(0, 3600) # 0 to 360
+        self.sl_in_az.valueChanged.connect(self.on_teach_change)
         
         # Elevation
-        self.lbl_el = QLabel("Stow El: 0.0°")
-        self.sl_el = QSlider(Qt.Orientation.Horizontal)
-        self.sl_el.setRange(0, 900)
-        self.sl_el.valueChanged.connect(self.on_teach_change)
+        self.lbl_in_el = QLabel("Inactive El: 0.0°")
+        self.sl_in_el = QSlider(Qt.Orientation.Horizontal)
+        self.sl_in_el.setRange(0, 900)
+        self.sl_in_el.valueChanged.connect(self.on_teach_change)
         
-        teach_l.addWidget(self.lbl_az)
-        teach_l.addWidget(self.sl_az)
-        teach_l.addWidget(self.lbl_el)
-        teach_l.addWidget(self.sl_el)
-        gb_teach.setLayout(teach_l)
-        l_layout.addWidget(gb_teach)
+        self.btn_reset_inactive = QPushButton("Reset Inactive (to Sun)")
+        self.btn_reset_inactive.clicked.connect(self.reset_inactive)
         
-        # 4. Actions
+        teach_l.addWidget(self.lbl_in_az)
+        teach_l.addWidget(self.sl_in_az)
+        teach_l.addWidget(self.lbl_in_el)
+        teach_l.addWidget(self.sl_in_el)
+        teach_l.addWidget(self.btn_reset_inactive)
+        gb_teach_inaz.setLayout(teach_l)
+        l_layout.addWidget(gb_teach_inaz)
+        
+        # 4. Teach ACTIVE (Tracking Group)
+        gb_teach_act = QGroupBox("Teach Active")
+        act_teach_l = QVBoxLayout()
+        
+        # Azimuth
+        self.lbl_act_az = QLabel("Active Az: 0.0°")
+        self.sl_act_az = QSlider(Qt.Orientation.Horizontal)
+        self.sl_act_az.setRange(0, 3600)
+        self.sl_act_az.valueChanged.connect(self.on_teach_change)
+        
+        # Elevation
+        self.lbl_act_el = QLabel("Active El: 0.0°")
+        self.sl_act_el = QSlider(Qt.Orientation.Horizontal)
+        self.sl_act_el.setRange(0, 900)
+        self.sl_act_el.valueChanged.connect(self.on_teach_change)
+        
+        self.btn_reset_active = QPushButton("Reset Active (to Sun)")
+        self.btn_reset_active.clicked.connect(self.reset_active)
+        
+        act_teach_l.addWidget(self.lbl_act_az)
+        act_teach_l.addWidget(self.sl_act_az)
+        act_teach_l.addWidget(self.lbl_act_el)
+        act_teach_l.addWidget(self.sl_act_el)
+        act_teach_l.addWidget(self.btn_reset_active)
+        gb_teach_act.setLayout(act_teach_l)
+        l_layout.addWidget(gb_teach_act)
+
+        # 5. Actions
         gb_act = QGroupBox("Actions")
         act_l = QVBoxLayout()
         
@@ -141,10 +181,10 @@ class StowRecorder(QWidget):
         h_interp = QHBoxLayout()
         self.btn_interp = QPushButton("Interpolate Selection")
         self.btn_interp.clicked.connect(self.interpolate_selection)
-        self.btn_reset = QPushButton("Reset Row (Sun)")
-        self.btn_reset.clicked.connect(self.reset_row)
+        self.btn_reset_row = QPushButton("Reset Row (Sun)")
+        self.btn_reset_row.clicked.connect(self.reset_row)
         h_interp.addWidget(self.btn_interp)
-        h_interp.addWidget(self.btn_reset)
+        h_interp.addWidget(self.btn_reset_row)
         
         act_l.addWidget(self.btn_copy_next)
         act_l.addLayout(h_interp)
@@ -166,7 +206,7 @@ class StowRecorder(QWidget):
         gb_act.setLayout(act_l)
         l_layout.addWidget(gb_act)
         
-        # 5. Profile Management
+        # 6. Profile Management
         gb_file = QGroupBox("Stow Profile")
         file_l = QVBoxLayout()
         
@@ -199,9 +239,6 @@ class StowRecorder(QWidget):
         h_load.addWidget(self.btn_load)
         h_load.addWidget(self.btn_del)
         
-        # Populate Profiles (will be called in __init__ after txt_path is set)
-        # self.refresh_profiles() 
-        
         file_l.addLayout(h_path)
         file_l.addLayout(h_name)
         file_l.addLayout(h_load)
@@ -213,7 +250,10 @@ class StowRecorder(QWidget):
         
         # --- RIGHT: TABLE ---
         self.table = QTableWidget()
-        cols = ["Time", "Sim Safety", "Sun Az", "Sun El", "Stow Az", "Stow El", "Profile Safety"]
+        # Cols: Time, Safety, SunAz, SunEl, InactiveAz, InactiveEl, ActiveAz, ActiveEl, ProfileSafety
+        cols = ["Time", "Sim Safety", "Sun Az", "Sun El", 
+                "Inactive Az", "Inactive El", "Active Az", "Active El", 
+                "Profile Safety"]
         self.table.setColumnCount(len(cols))
         self.table.setHorizontalHeaderLabels(cols)
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
@@ -234,7 +274,6 @@ class StowRecorder(QWidget):
         geo = self.state.geometry
         cfg = self.state.config
         
-        # Pivot Z Correction (Offset + Half Thickness)
         piv_z = geo.pivot_offset[2] + (geo.thickness / 2.0)
         
         self.lbl_geo.setText(f"Panel: {geo.width}x{geo.length}m, Thk: {geo.thickness}m")
@@ -255,11 +294,6 @@ class StowRecorder(QWidget):
         for r in range(rows):
             row = self.day_data.iloc[r]
             
-            # We want: Safe=Check, Clash=X
-            # If row['safety'] (Collision) is True -> Clash -> X
-            # Note: During Load, we might have 'sim_safety' string already.
-            # Handled below.
-            
             # 0: Time
             if hasattr(row['time'], 'strftime'):
                  time_str = row['time'].strftime("%H:%M")
@@ -271,9 +305,6 @@ class StowRecorder(QWidget):
             self.table.setItem(r, 0, item_t)
             
             # 1: Sim Safety
-            # In DataFrame we expect 'safety' col (bool) OR 'sim_safety' (str/emoji from file)
-            # If loading from Simulation Results: 'safety' is bool (True=Clash).
-            # If loading from File: 'sim_safety' is "✅"/"❌".
             if 'sim_safety' in row:
                 safety = row['sim_safety']
             elif 'safety' in row:
@@ -294,20 +325,21 @@ class StowRecorder(QWidget):
             item_sel.setFlags(item_sel.flags() ^ Qt.ItemFlag.ItemIsEditable)
             self.table.setItem(r, 3, item_sel)
             
-            # 4/5: Stow Az/El (Initially Copy Sun)
+            # 4/5: Inactive Az/El (Default: Sun)
             self.table.setItem(r, 4, QTableWidgetItem(f"{row['sun_az']:.1f}"))
             self.table.setItem(r, 5, QTableWidgetItem(f"{row['sun_el']:.1f}"))
+
+            # 6/7: Active Az/El (Default: Sun)
+            self.table.setItem(r, 6, QTableWidgetItem(f"{row['sun_az']:.1f}"))
+            self.table.setItem(r, 7, QTableWidgetItem(f"{row['sun_el']:.1f}"))
             
-            # 6: Profile Safety (Initially Unknown/Calc)
-            self.table.setItem(r, 6, QTableWidgetItem("❓"))
+            # 8: Profile Safety
+            self.table.setItem(r, 8, QTableWidgetItem("❓"))
             
         self.table.blockSignals(False)
         self.table.selectRow(0)
         
-        # Initial Calc for ALL rows (to populate Safety)
-        # We do this for all rows so user sees status immediately
-        # Might be slow for 1440 mins? 
-        # InfiniteKernel is fast (0.1ms). 1440 * 0.1ms = 144ms. OK.
+        # Initial Calc
         for i in range(rows):
              self.update_row_safety(i, update_viz=(i==0))
         
@@ -331,19 +363,32 @@ class StowRecorder(QWidget):
     def update_ui_from_row(self, idx):
         try:
             t = self.table.item(idx, 0).text()
-            stow_az = float(self.table.item(idx, 4).text())
-            stow_el = float(self.table.item(idx, 5).text())
+            in_az = float(self.table.item(idx, 4).text())
+            in_el = float(self.table.item(idx, 5).text())
+            act_az = float(self.table.item(idx, 6).text())
+            act_el = float(self.table.item(idx, 7).text())
             
             self.lbl_time.setText(t)
             
-            self.sl_az.blockSignals(True)
-            self.sl_el.blockSignals(True)
-            self.sl_az.setValue(int(stow_az * 10))
-            self.sl_el.setValue(int(stow_el * 10))
-            self.lbl_az.setText(f"Stow Az: {stow_az:.1f}°")
-            self.lbl_el.setText(f"Stow El: {stow_el:.1f}°")
-            self.sl_az.blockSignals(False)
-            self.sl_el.blockSignals(False)
+            # Update Inactive
+            self.sl_in_az.blockSignals(True)
+            self.sl_in_el.blockSignals(True)
+            self.sl_in_az.setValue(int(in_az * 10))
+            self.sl_in_el.setValue(int(in_el * 10))
+            self.lbl_in_az.setText(f"Inactive Az: {in_az:.1f}°")
+            self.lbl_in_el.setText(f"Inactive El: {in_el:.1f}°")
+            self.sl_in_az.blockSignals(False)
+            self.sl_in_el.blockSignals(False)
+
+            # Update Active
+            self.sl_act_az.blockSignals(True)
+            self.sl_act_el.blockSignals(True)
+            self.sl_act_az.setValue(int(act_az * 10))
+            self.sl_act_el.setValue(int(act_el * 10))
+            self.lbl_act_az.setText(f"Active Az: {act_az:.1f}°")
+            self.lbl_act_el.setText(f"Active El: {act_el:.1f}°")
+            self.sl_act_az.blockSignals(False)
+            self.sl_act_el.blockSignals(False)
             
             self.update_row_safety(idx)
             
@@ -351,53 +396,77 @@ class StowRecorder(QWidget):
             pass
             
     def on_teach_change(self):
-        az = self.sl_az.value() / 10.0
-        el = self.sl_el.value() / 10.0
+        in_az = self.sl_in_az.value() / 10.0
+        in_el = self.sl_in_el.value() / 10.0
+        act_az = self.sl_act_az.value() / 10.0
+        act_el = self.sl_act_el.value() / 10.0
         
-        self.lbl_az.setText(f"Stow Az: {az:.1f}°")
-        self.lbl_el.setText(f"Stow El: {el:.1f}°")
+        self.lbl_in_az.setText(f"Inactive Az: {in_az:.1f}°")
+        self.lbl_in_el.setText(f"Inactive El: {in_el:.1f}°")
+        self.lbl_act_az.setText(f"Active Az: {act_az:.1f}°")
+        self.lbl_act_el.setText(f"Active El: {act_el:.1f}°")
         
         self.table.blockSignals(True)
-        self.table.item(self.current_idx, 4).setText(f"{az:.1f}")
-        self.table.item(self.current_idx, 5).setText(f"{el:.1f}")
+        self.table.item(self.current_idx, 4).setText(f"{in_az:.1f}")
+        self.table.item(self.current_idx, 5).setText(f"{in_el:.1f}")
+        self.table.item(self.current_idx, 6).setText(f"{act_az:.1f}")
+        self.table.item(self.current_idx, 7).setText(f"{act_el:.1f}")
         self.table.blockSignals(False)
         
         self.update_row_safety(self.current_idx)
         
+    def reset_inactive(self):
+        # Reset current Inactive to Sun
+        sun_az = float(self.table.item(self.current_idx, 2).text())
+        sun_el = float(self.table.item(self.current_idx, 3).text())
+        
+        self.sl_in_az.setValue(int(sun_az * 10))
+        self.sl_in_el.setValue(int(sun_el * 10))
+        # Trigger checked by signal
+        
+    def reset_active(self):
+        # Reset current Active to Sun
+        sun_az = float(self.table.item(self.current_idx, 2).text())
+        sun_el = float(self.table.item(self.current_idx, 3).text())
+        
+        self.sl_act_az.setValue(int(sun_az * 10))
+        self.sl_act_el.setValue(int(sun_el * 10))
+
     def on_table_edit(self, row, col):
-        if col in [4, 5]:
+        if col in [4, 5, 6, 7]:
             self.update_ui_from_row(row)
             
     def update_row_safety(self, idx, update_viz=True):
         if not self.kernel: return
         
         try:
-            stow_az = float(self.table.item(idx, 4).text())
-            stow_el = float(self.table.item(idx, 5).text())
+            in_az = float(self.table.item(idx, 4).text())
+            in_el = float(self.table.item(idx, 5).text())
+            act_az = float(self.table.item(idx, 6).text())
+            act_el = float(self.table.item(idx, 7).text())
             
             row_data = self.day_data.iloc[idx]
             sun_az = row_data['sun_az']
             sun_el = row_data['sun_el']
             
-            # Use negative plant rotation as per new coordinate system
-            local_az = sun_az - (-self.state.config.plant_rotation)
+            # Conversion to Local Plant Coordinates
+            rot = -self.state.config.plant_rotation
+            local_sun_az = sun_az - rot
+            local_in_az = in_az - rot
+            local_act_az = act_az - rot
             
-            # Stow Angle is GLOBAL (from user input). Kernel needs LOCAL for Override.
-            local_stow_az = stow_az - (-self.state.config.plant_rotation)
-            
-            # Solve with kernel
-            # solve_timestep returns (states, collision_detected)
-            # Collision=True means UNSAFE.
+            # Solve
             states, collision = self.kernel.solve_timestep(
-                local_az, sun_el,
+                local_sun_az, sun_el,
                 enable_safety=True,
-                stow_override=(local_stow_az, stow_el)
+                inactive_override=(local_in_az, in_el),
+                active_override=(local_act_az, act_el)
             )
             
             is_safe = not collision
             
             # Update Table
-            s_item = self.table.item(idx, 6)
+            s_item = self.table.item(idx, 8)
             s_item.setText("✅" if is_safe else "❌")
             
             # Update Viz
@@ -410,12 +479,16 @@ class StowRecorder(QWidget):
     def copy_and_next(self):
         if self.current_idx >= self.table.rowCount() - 1: return
         
-        az = self.table.item(self.current_idx, 4).text()
-        el = self.table.item(self.current_idx, 5).text()
+        in_az = self.table.item(self.current_idx, 4).text()
+        in_el = self.table.item(self.current_idx, 5).text()
+        act_az = self.table.item(self.current_idx, 6).text()
+        act_el = self.table.item(self.current_idx, 7).text()
         
         next_idx = self.current_idx + 1
-        self.table.item(next_idx, 4).setText(az)
-        self.table.item(next_idx, 5).setText(el)
+        self.table.item(next_idx, 4).setText(in_az)
+        self.table.item(next_idx, 5).setText(in_el)
+        self.table.item(next_idx, 6).setText(act_az)
+        self.table.item(next_idx, 7).setText(act_el)
         
         self.table.selectRow(next_idx)
         
@@ -428,8 +501,12 @@ class StowRecorder(QWidget):
         for idx in rows:
             az = self.table.item(idx, 2).text()
             el = self.table.item(idx, 3).text()
+            # Set Inactive
             self.table.item(idx, 4).setText(az)
             self.table.item(idx, 5).setText(el)
+            # Set Active
+            self.table.item(idx, 6).setText(az)
+            self.table.item(idx, 7).setText(el)
         self.table.blockSignals(False)
         
         self.update_ui_from_row(self.current_idx)
@@ -440,7 +517,7 @@ class StowRecorder(QWidget):
     def reset_all_rows(self):
         # Confirm?
         reply = QMessageBox.question(self, 'Reset Profile', 
-             "Reset all stow angles to Sun Position?", QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+             "Reset all angles to Sun Position?", QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
         if reply == QMessageBox.StandardButton.No: return
 
         count = self.table.rowCount()
@@ -448,8 +525,12 @@ class StowRecorder(QWidget):
         for idx in range(count):
             az = self.table.item(idx, 2).text()
             el = self.table.item(idx, 3).text()
+            
             self.table.item(idx, 4).setText(az)
             self.table.item(idx, 5).setText(el)
+            self.table.item(idx, 6).setText(az)
+            self.table.item(idx, 7).setText(el)
+            
         self.table.blockSignals(False)
         
         # Update Safety
@@ -465,20 +546,33 @@ class StowRecorder(QWidget):
         start_r = rows[0]
         end_r = rows[-1]
         
-        start_az = float(self.table.item(start_r, 4).text())
-        start_el = float(self.table.item(start_r, 5).text())
-        end_az = float(self.table.item(end_r, 4).text())
-        end_el = float(self.table.item(end_r, 5).text())
+        s_in_az = float(self.table.item(start_r, 4).text())
+        s_in_el = float(self.table.item(start_r, 5).text())
+        e_in_az = float(self.table.item(end_r, 4).text())
+        e_in_el = float(self.table.item(end_r, 5).text())
+
+        s_act_az = float(self.table.item(start_r, 6).text())
+        s_act_el = float(self.table.item(start_r, 7).text())
+        e_act_az = float(self.table.item(end_r, 6).text())
+        e_act_el = float(self.table.item(end_r, 7).text())
         
         count = end_r - start_r
         for i in range(1, count):
             frac = i / count
-            az = start_az + (end_az - start_az) * frac
-            el = start_el + (end_el - start_el) * frac
+            
+            # Inactive
+            i_az = s_in_az + (e_in_az - s_in_az) * frac
+            i_el = s_in_el + (e_in_el - s_in_el) * frac
+            
+            # Active
+            a_az = s_act_az + (e_act_az - s_act_az) * frac
+            a_el = s_act_el + (e_act_el - s_act_el) * frac
             
             r = start_r + i
-            self.table.item(r, 4).setText(f"{az:.1f}")
-            self.table.item(r, 5).setText(f"{el:.1f}")
+            self.table.item(r, 4).setText(f"{i_az:.1f}")
+            self.table.item(r, 5).setText(f"{i_el:.1f}")
+            self.table.item(r, 6).setText(f"{a_az:.1f}")
+            self.table.item(r, 7).setText(f"{a_el:.1f}")
             self.update_row_safety(r)
             
     def generate_smooth_frames(self):
@@ -491,59 +585,55 @@ class StowRecorder(QWidget):
         self.smooth_frames = []
         STEPS = 10 
         
-        # Pre-calc date for context (optional, just for viz)
-        # We can iterate through the selection
         for i in range(len(rows) - 1):
              r1 = rows[i]
              r2 = rows[i+1]
              
-             # Get Data
-             t1 = self.table.item(r1, 0).text()
+             # Get Data 1
              az1 = float(self.table.item(r1, 2).text())
              el1 = float(self.table.item(r1, 3).text())
-             saz1 = float(self.table.item(r1, 4).text())
-             sel1 = float(self.table.item(r1, 5).text())
+             in_az1 = float(self.table.item(r1, 4).text())
+             in_el1 = float(self.table.item(r1, 5).text())
+             act_az1 = float(self.table.item(r1, 6).text())
+             act_el1 = float(self.table.item(r1, 7).text())
 
-             t2 = self.table.item(r2, 0).text() # Unused for lerp but good for debug
+             # Get Data 2
              az2 = float(self.table.item(r2, 2).text())
              el2 = float(self.table.item(r2, 3).text())
-             saz2 = float(self.table.item(r2, 4).text())
-             sel2 = float(self.table.item(r2, 5).text())
+             in_az2 = float(self.table.item(r2, 4).text())
+             in_el2 = float(self.table.item(r2, 5).text())
+             act_az2 = float(self.table.item(r2, 6).text())
+             act_el2 = float(self.table.item(r2, 7).text())
              
              # Interpolate
              for j in range(STEPS):
                   frac = j / STEPS
                   
-                  # Shortest Path Interpolation for Azimuth
-                  # Diff range: -180 to 180
+                  # Sun
                   d_az = (az2 - az1 + 180) % 360 - 180
-                  i_az = (az1 + d_az * frac) % 360
+                  s_az = (az1 + d_az * frac) % 360
+                  s_el = el1 + (el2 - el1) * frac
                   
-                  i_el = el1 + (el2 - el1) * frac
-                  
-                  d_saz = (saz2 - saz1 + 180) % 360 - 180
-                  i_saz = (saz1 + d_saz * frac) % 360
-                  
-                  i_sel = sel1 + (sel2 - sel1) * frac
+                  # Inactive
+                  d_iaz = (in_az2 - in_az1 + 180) % 360 - 180
+                  i_az = (in_az1 + d_iaz * frac) % 360
+                  i_el = in_el1 + (in_el2 - in_el1) * frac
+
+                  # Active
+                  d_aaz = (act_az2 - act_az1 + 180) % 360 - 180
+                  a_az = (act_az1 + d_aaz * frac) % 360
+                  a_el = act_el1 + (act_el2 - act_el1) * frac
                   
                   self.smooth_frames.append({
-                       "sun_az": i_az,
-                       "sun_el": i_el,
-                       "stow_az": i_saz,
-                       "stow_el": i_sel,
-                       "label": f"Row {r1}->{r2} ({int(frac*100)}%)"
+                       "sun_az": s_az,
+                       "sun_el": s_el,
+                       "inactive_az": i_az,
+                       "inactive_el": i_el,
+                       "active_az": a_az,
+                       "active_el": a_el,
+                       "label": f"Row {r1}->{r2}"
                   })
                   
-        # Append final frame (Exact last row)
-        last_r = rows[-1]
-        self.smooth_frames.append({
-             "sun_az": float(self.table.item(last_r, 2).text()),
-             "sun_el": float(self.table.item(last_r, 3).text()),
-             "stow_az": float(self.table.item(last_r, 4).text()),
-             "stow_el": float(self.table.item(last_r, 5).text()),
-             "label": f"Row {last_r} (End)"
-        })
-        
         return True
 
     def play_smooth(self):
@@ -599,23 +689,24 @@ class StowRecorder(QWidget):
          frame = self.smooth_frames[idx]
          
          # Calc Safety Realtime
-         # Use negative plant rotation
          rot = -self.state.config.plant_rotation
          
-         local_az = frame['sun_az'] - rot
-         local_stow_az = frame['stow_az'] - rot
+         local_sun_az = frame['sun_az'] - rot
+         local_in_az = frame['inactive_az'] - rot
+         local_act_az = frame['active_az'] - rot
          
          states, collision = self.kernel.solve_timestep(
-              local_az, frame['sun_el'], 
-              enable_safety=False, # Viz: Always Track/Stow as requested
-              stow_override=(local_stow_az, frame['stow_el'])
+              local_sun_az, frame['sun_el'], 
+              enable_safety=False,
+              inactive_override=(local_in_az, frame['inactive_el']),
+              active_override=(local_act_az, frame['active_el'])
          )
          
          is_safe = not collision
          
-         # Update Labels (Optional: Reuse Teach Labels or separate?)
-         self.lbl_az.setText(f"Stow Az: {frame['stow_az']:.1f}° (Interpolated)")
-         self.lbl_el.setText(f"Stow El: {frame['stow_el']:.1f}°")
+         # Update Labels
+         self.lbl_in_az.setText(f"Inactive Az: {frame['inactive_az']:.1f}° (Sim)")
+         self.lbl_act_az.setText(f"Active Az: {frame['active_az']:.1f}° (Sim)")
          
          # Emit Viz Update
          self.preview_update.emit(frame['sun_az'], frame['sun_el'], is_safe, states)
@@ -682,15 +773,6 @@ class StowRecorder(QWidget):
         
         # Prepare Geo Dict (Fix PivotZ in metadata if desired, or just raw)
         geo_dict = self.state.geometry.__dict__.copy() if hasattr(self.state.geometry, '__dict__') else {}
-        # User complained about saved pivot offset. 
-        # We save exact internal state. If they want "Setup" value, we might calculate.
-        # But saving internal state is safer for loading back. 
-        # I'll keep raw internal but maybe comment or transform if strictly requested.
-        # User said "pivot offset is again saved differently". They likely want 0.38 (config) vs 0.305 (internal).
-        # We can reconstruct? pivot_z = pivot_offset[2] + thickness/2?
-        # Let's save both for clarity or just force the Config Pivot Height.
-        # If I change it here, loading logic must invert it.
-        # Since I am just saving for Reference (likely), I will save a "display_pivot_z": val
         
         piv_z = geo_dict.get('pivot_offset', [0,0,0])[2] + (geo_dict.get('thickness', 0)/2.0)
         geo_dict['display_pivot_z_height'] = piv_z
@@ -710,16 +792,20 @@ class StowRecorder(QWidget):
             sim_safety = self.table.item(r, 1).text() # Save Sim Safety Emoji/Status
             sun_az = float(self.table.item(r, 2).text())
             sun_el = float(self.table.item(r, 3).text())
-            stow_az = float(self.table.item(r, 4).text())
-            stow_el = float(self.table.item(r, 5).text())
+            in_az = float(self.table.item(r, 4).text())
+            in_el = float(self.table.item(r, 5).text())
+            act_az = float(self.table.item(r, 6).text())
+            act_el = float(self.table.item(r, 7).text())
             
             data["rows"].append({
                 "time": t_str, 
                 "sim_safety": sim_safety,
                 "sun_az": sun_az,
                 "sun_el": sun_el,
-                "stow_az": stow_az, 
-                "stow_el": stow_el
+                "inactive_az": in_az, 
+                "inactive_el": in_el,
+                "active_az": act_az,
+                "active_el": act_el
             })
             
         path = os.path.join(folder, f"{name}.json")
@@ -758,31 +844,13 @@ class StowRecorder(QWidget):
 
             # --- No Interpolation Mode (Exploration) ---
             # 1. Reconstruct DataFrame directly from File
-            # Columns needed for load_day_data: 'time', 'sun_az', 'sun_el', 'safety' (or sim_safety)
             
             new_df = pd.DataFrame(file_rows)
-            
-            # If 'time' is string, we keep it as is for display, but load_day_data expects specific handling?
-            # load_day_data: 
-            #   row['time'].strftime("%H:%M") -> assumes datetime object
-            #   We need to convert 'time' back to datetime objects if possible, or adjust load_day_data.
-            #   Let's try to convert. The date doesn't matter much for display (just HH:MM), 
-            #   but for consistency let's use the date from metadata or today.
-            
             meta_date = data.get("metadata", {}).get("date_label", "Unknown")
             
             try:
-                # Try parsing. If format varies, might fail. 
-                # Saved as "HH:MM" usually? 
-                # Wait, in save_profile: t_str = self.table.item(r, 0).text() -> "HH:MM"
-                # So the file contains generic string "HH:MM". 
-                # PD.to_datetime will default to today or unix epoch.
-                # simpler: Just ensure it's a datetime object so .strftime works, OR
-                # Update load_day_data to handle string 'time'.
                 new_df['time'] = pd.to_datetime(new_df['time'], format="%H:%M")
             except:
-                # Fallback: if parse fails, maybe it's already string.
-                # We need to monkey-patch or ensure load_day_data handles strings.
                 pass
                 
             # 2. Update Context Labels
@@ -793,24 +861,42 @@ class StowRecorder(QWidget):
             self.load_day_data(new_df, meta_date)
             
             # 4. Restore Stow Angles 
-            # load_day_data overwrites cols 4/5 with Sun Position by default.
+            # load_day_data overwrites vals with Sun Position by default.
             # We need to overwrite them with the file's stow angles.
-            # And since we passed new_df to load_day_data, it used new_df['sun_az']...
-            # Does new_df have 'stow_az'? Yes.
             
             rows = len(new_df)
             self.table.blockSignals(True)
             for r in range(rows):
                 row = new_df.iloc[r]
-                # Overwrite the copied sun angles with actual stow angles
-                if 'stow_az' in row and 'stow_el' in row:
-                    self.table.item(r, 4).setText(f"{row['stow_az']:.1f}")
-                    self.table.item(r, 5).setText(f"{row['stow_el']:.1f}")
+                
+                # Default logic: Active/Inactive are reset to sun if not found
+                # But we just called load_day_data which set them to sun.
+                
+                # Check for Legacy Keys or New Keys
+                in_az = None; in_el = None
+                act_az = None; act_el = None
+                
+                # Inactive
+                if 'inactive_az' in row: in_az = row['inactive_az']
+                elif 'stow_az' in row: in_az = row['stow_az'] # Legacy
+                
+                if 'inactive_el' in row: in_el = row['inactive_el']
+                elif 'stow_el' in row: in_el = row['stow_el'] # Legacy
+                
+                # Active
+                if 'active_az' in row: act_az = row['active_az']
+                if 'active_el' in row: act_el = row['active_el']
+                
+                # Write to Table if found
+                if in_az is not None: self.table.item(r, 4).setText(f"{in_az:.1f}")
+                if in_el is not None: self.table.item(r, 5).setText(f"{in_el:.1f}")
+                
+                if act_az is not None: self.table.item(r, 6).setText(f"{act_az:.1f}")
+                if act_el is not None: self.table.item(r, 7).setText(f"{act_el:.1f}")
+                
             self.table.blockSignals(False)
             
             # 5. Recalc Safety (Profile Safety)
-            # This uses the NEW self.day_data (which is new_df).
-            # So it uses the FILE's sun position. This is what we want (Context Preservation).
             for i in range(rows):
                  self.update_row_safety(i, update_viz=(i==0))
                  

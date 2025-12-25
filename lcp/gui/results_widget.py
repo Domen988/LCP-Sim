@@ -439,14 +439,9 @@ class ResultsWidget(QWidget):
         new_val = max(0, min(self.slider.maximum(), val + delta))
         self.slider.setValue(new_val)
 
-    def _ensure_states(self, f, force_override=None):
+    def _ensure_states(self, f, inactive_override=None, active_override=None):
         """Regenerate physics states if missing OR if override requested."""
-        # If force_override is present, ALWAYS regen.
-        # If not present, only regen if states are missing.
-        # ISSUE: If we toggle safety, states might be present (cached from previous calc with diff safety).
-        # We handle this by clearing 'states' in set_enable_safety before calling update_instant_stats.
-        
-        if f.get('states') and not force_override: 
+        if f.get('states') and inactive_override is None and active_override is None: 
              return
              
         # Lazy Init Kernel
@@ -454,14 +449,13 @@ class ResultsWidget(QWidget):
              self.kernel = InfiniteKernel()
              
         # Update Kernel Physics
-        # We use self.state which should be synced with loaded sim results
         s = self.state 
         self.kernel.geo = s.geometry
         self.kernel.cfg = s.config
         self.kernel.collider.geo = s.geometry
         self.kernel.collider.cfg = s.config
         
-        # Regen Pivots (Standard 3x3)
+        # Regen Pivots
         pivots = {}
         for r in range(3):
              for c in range(3):
@@ -473,21 +467,35 @@ class ResultsWidget(QWidget):
         # Solve
         # Adjust Azimuth for Plant Rotation
         local_az = f['sun_az'] - (-s.config.plant_rotation)
-        # User Request: Always visualize tracking position ("tracing position") 
-        # but keep calculation for stow same (backend simulation handles that).
-        # We explicitly disable safety here so the Kernel returns "Tracking" states
-        # even if a collision would occur. The simulation results (all_data) still
-        # contain the correct "Stow Loss" / "Safety Mode" booleans which are displayed in charts.
+        
+        # Use updated solve_timestep signature
+        # Convert overrides to local frame if they are global?
+        # WAIT. get_position_at returns global values?
+        # get_position_at returns raw values stored in Keyframe.
+        # Recorder saves global slider values.
+        # So yes, they are global. We need to convert to local.
+        
+        rot = -s.config.plant_rotation
+        
+        local_in = None
+        if inactive_override:
+            local_in = (inactive_override[0] - rot, inactive_override[1])
+            
+        local_act = None
+        if active_override:
+            local_act = (active_override[0] - rot, active_override[1])
+
         states, safety = self.kernel.solve_timestep(
              local_az, 
              f['sun_el'], 
              enable_safety=False, # Force Tracking Viz
-             stow_override=force_override
+             inactive_override=local_in,
+             active_override=local_act
         )
         
         f['states'] = states
         f['safety'] = safety 
-        print(f"DEBUG: ResultsWidget REGEN STATES. Override={force_override} Safety={safety}") 
+        # print(f"DEBUG: ResultsWidget REGEN STATES. In={local_in} Act={local_act} Safety={safety}") 
         
     def update_instant_stats(self, idx):
         if not self.current_frames or idx >= len(self.current_frames): return
@@ -496,15 +504,20 @@ class ResultsWidget(QWidget):
         self.time_changed.emit(f['time'])
         
         # Check for Profile Override
-        override = None
+        in_ovr = None
+        act_ovr = None
+        
         if hasattr(self, 'state') and self.state.stow_profile:
-             override = self.state.stow_profile.get_position_at(f['time'])
-             print(f"DEBUG: ResultsWidget Time={f['time']} Override={override} ProfileLen={len(self.state.stow_profile.keyframes)}")
+             pos = self.state.stow_profile.get_position_at(f['time'])
+             if pos:
+                 # pos is (inactive_az, inactive_el, active_az, active_el)
+                 in_ovr = (pos[0], pos[1])
+                 act_ovr = (pos[2], pos[3])
+                 # print(f"DEBUG: ResultsWidget Profile Active. In={in_ovr} Act={act_ovr}")
              
         # Check/Regen States
         if hasattr(self, 'state'):
-             # If we have an override, we FORCE regeneration to visualize it
-             self._ensure_states(f, force_override=override)
+             self._ensure_states(f, inactive_override=in_ovr, active_override=act_ovr)
         
         # 1. Update Info Labels
         self.lbl_time.setText(f['time'].strftime("%H:%M"))

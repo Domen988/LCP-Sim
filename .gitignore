@@ -20,3 +20,8 @@ test_dni_smoothing_output.csv
 verify_*.py
 test_*.py
 benchmark_performance.py
+
+dist/
+build/
+Release/
+*.spec
