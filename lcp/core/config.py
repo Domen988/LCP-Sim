@@ -12,3 +12,4 @@ class ScenarioConfig:
     tolerance: float = 0.03
     total_panels: int = 2400 # 60x40 default
     plant_rotation: float = 5.0 # Clockwise from North
+    min_elevation: float = 15.0 # Degrees (User requests min 15°)

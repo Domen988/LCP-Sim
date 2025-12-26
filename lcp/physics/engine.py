@@ -88,10 +88,15 @@ class InfiniteKernel:
         active_override: (az, el) for Odd panels (Active/Tracking Group).
         """
         # 1. Calculate Ideal Tracking Orientation
-        if sun_el <= 0:
-            target_rot = self.rig.get_orientation(sun_az, max(0.01, sun_el))
-        else:
-            target_rot = self.rig.get_orientation(sun_az, sun_el)
+        min_el = getattr(self.cfg, 'min_elevation', 15.0)
+        
+        # We always clamp the tracking elevation to the minimum allowed
+        # Careful: sun_el is the actual sun position. 
+        # target_rot is the panel orientation.
+        # If Sun is at 5 deg, Panel should be at 15 deg (closest it can get).
+        
+        target_el = max(min_el, sun_el)
+        target_rot = self.rig.get_orientation(sun_az, target_el)
             
         # Prepare Manual Rotations
         manual_inactive_rot = None
@@ -214,7 +219,17 @@ class InfiniteKernel:
                 if "STOW" in mode:
                     p_factor = 0.0 
                 else:
-                    p_factor = cos_theta * (1.0 - shad_loss)
+                    # STRICT POINTING EFFICIENCY:
+                    # If the panel is not pointing directly at the sun (with small tolerance),
+                    # power drops to 0. This enforces the rule that if min_elevation prevents
+                    # direct alignment, we get 0 power.
+                    # cos(0.8 deg) ~= 0.9999
+                    pointing_threshold = 0.9999
+                    
+                    if cos_theta < pointing_threshold:
+                         p_factor = 0.0
+                    else:
+                         p_factor = cos_theta * (1.0 - shad_loss)
                     
                 states.append(PanelState(
                     index=idx,

@@ -231,6 +231,7 @@ class Sidebar(QWidget):
         add_float("Pitch X (m)", "grid_pitch_x", 0.5, 10.0, 0.1, c)
         add_float("Pitch Y (m)", "grid_pitch_y", 0.5, 10.0, 0.1, c)
         add_float("Clash Tolerance (m)", "tolerance", 0.0, 0.5, 0.01, c)
+        add_float("Min Elevation (°)", "min_elevation", 0.0, 90.0, 1.0, c)
         
         box.addLayout(form)
         self.layout.addWidget(box)
@@ -409,6 +410,7 @@ class Sidebar(QWidget):
         self.sb_grid_pitch_x.blockSignals(True); self.sb_grid_pitch_x.setValue(c.grid_pitch_x); self.sb_grid_pitch_x.blockSignals(False)
         self.sb_grid_pitch_y.blockSignals(True); self.sb_grid_pitch_y.setValue(c.grid_pitch_y); self.sb_grid_pitch_y.blockSignals(False)
         self.sb_tolerance.blockSignals(True); self.sb_tolerance.setValue(c.tolerance); self.sb_tolerance.blockSignals(False)
+        self.sb_min_elevation.blockSignals(True); self.sb_min_elevation.setValue(c.min_elevation); self.sb_min_elevation.blockSignals(False)
         
         # Sizing / Config
         self.sb_rows.blockSignals(True); self.sb_rows.setValue(self.state.rows); self.sb_rows.blockSignals(False)
