@@ -123,9 +123,15 @@ if not show_full_year:
         value=min_date
     )
 
+point_size = st.sidebar.slider("Point Size", 0.1, 3.0, 1.0, 0.1)
+
 # Prepare Data Subsets
 # If Full Year: foreground = all data, background = empty
 # If Single Day: foreground = day data, background = all data (dimmed)
+
+# Calculate Plot Azimuth (Centered at 0 for South Hemisphere convenience)
+# Maps 0..360 to 0..180 (East) and -180..0 (West)
+df['plot_az'] = df['sun_az'].apply(lambda x: x if x <= 180 else x - 360)
 
 if show_full_year:
     fg_df = df
@@ -259,6 +265,8 @@ def add_layers(fig, x_col, y_col, r_col=None, polar=False):
             color_discrete_map=color_map,
             render_mode="webgl", hover_data=['time']
         )
+    
+    fg_fig.update_traces(marker=dict(size=point_size))
         
     for trace in fg_fig.data:
         fig.add_trace(trace)
@@ -268,22 +276,27 @@ clash_subset = fg_df[fg_df['Status'] == 'CLASH']
 regions = []
 
 if not clash_subset.empty:
-    clash_east = clash_subset[clash_subset['sun_az'] < 180]
-    clash_west = clash_subset[clash_subset['sun_az'] >= 180]
+    # Split using plot_az. 
+    # East (AM) > 0. West (PM) < 0.
+    clash_east = clash_subset[clash_subset['plot_az'] > 0]
+    clash_west = clash_subset[clash_subset['plot_az'] <= 0]
     
     if not clash_east.empty:
         regions.append({
             "name": "East (AM)",
-            "az_min": clash_east['sun_az'].min(), "az_max": clash_east['sun_az'].max(),
+            "az_min": clash_east['plot_az'].min(), "az_max": clash_east['plot_az'].max(),
             "el_min": clash_east['sun_el'].min(), "el_max": clash_east['sun_el'].max(),
-            "zen_min": clash_east['zenith'].min(), "zen_max": clash_east['zenith'].max()
+            "zen_min": clash_east['zenith'].min(), "zen_max": clash_east['zenith'].max(),
+            # Keep original AZ for Polar lines
+            "orig_az_min": clash_east['sun_az'].min(), "orig_az_max": clash_east['sun_az'].max()
         })
     if not clash_west.empty:
         regions.append({
             "name": "West (PM)",
-            "az_min": clash_west['sun_az'].min(), "az_max": clash_west['sun_az'].max(),
+            "az_min": clash_west['plot_az'].min(), "az_max": clash_west['plot_az'].max(),
             "el_min": clash_west['sun_el'].min(), "el_max": clash_west['sun_el'].max(),
-            "zen_min": clash_west['zenith'].min(), "zen_max": clash_west['zenith'].max()
+            "zen_min": clash_west['zenith'].min(), "zen_max": clash_west['zenith'].max(),
+            "orig_az_min": clash_west['sun_az'].min(), "orig_az_max": clash_west['sun_az'].max()
         })
     
     stats_lines = []
@@ -303,14 +316,15 @@ add_layers(fig_polar, x_col="sun_az", y_col=None, r_col="zenith", polar=True)
 
 # Add boundary lines
 for r in regions:
-    for az in [r['az_min'], r['az_max']]:
+    # Use original AZ for Polar Plot
+    for az in [r['orig_az_min'], r['orig_az_max']]:
         fig_polar.add_trace(go.Scatterpolar(
             r=[0, 90], theta=[az, az],
             mode='lines', line=dict(color='white', width=1, dash='dot'),
             showlegend=False, hoverinfo='skip'
         ))
     import numpy as np
-    theta_range = np.linspace(r['az_min'], r['az_max'], 50)
+    theta_range = np.linspace(r['orig_az_min'], r['orig_az_max'], 50)
     for zen in [r['zen_min'], r['zen_max']]:
         fig_polar.add_trace(go.Scatterpolar(
             r=[zen]*len(theta_range), theta=theta_range,
@@ -328,10 +342,11 @@ st.plotly_chart(fig_polar, use_container_width=True)
 
 # --- Chart 2: The Phase Space (Cartesian Scatter) ---
 st.subheader(f"2. The Phase Space (X/Y Map) {title_suffix}")
-st.markdown("Linear map for fitting safety boundaries.")
+st.markdown("Linear map for fitting safety boundaries. **0° Azimuth (North) Centered.**")
 
 fig_phase = go.Figure()
-add_layers(fig_phase, x_col="sun_az", y_col="sun_el", polar=False)
+# Use plot_az here!
+add_layers(fig_phase, x_col="plot_az", y_col="sun_el", polar=False)
 
 # Add shapes
 for r in regions:
@@ -346,7 +361,7 @@ for r in regions:
 
 fig_phase.update_layout(
     title=f"Sun Elevation vs Azimuth<br><span style='font-size:12px'>{clash_stats_str}</span>",
-    xaxis_title="Sun Azimuth (deg)",
+    xaxis_title="Sun Azimuth (deg) [0=North, -90=West, 90=East]",
     yaxis_title="Sun Elevation (deg)"
 )
 st.plotly_chart(fig_phase, use_container_width=True)
@@ -373,6 +388,9 @@ fig_calendar = px.scatter(
     labels={"date": "Date", "hour": "Hour of Day (Decimal)"},
     hover_data=['sun_az', 'sun_el']
 )
+# Update marker size for calendar
+fig_calendar.update_traces(marker=dict(size=point_size))
+
 # If a day is selected, add a vertical line marker
 if selected_date:
     fig_calendar.add_vline(x=selected_date, line_width=2, line_color="yellow", line_dash="solid")
