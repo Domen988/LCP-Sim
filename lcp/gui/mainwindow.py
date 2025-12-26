@@ -56,6 +56,7 @@ class MainWindow(QMainWindow):
         self.results = ResultsWidget()
         self.results.state = self.state # Inject AppState for shadow reconstruction
         dock_right.setWidget(self.results)
+        self.results.viewport = self.viewport # Inject Viewport for Recorder
         self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, dock_right)
         
         # C. BOTTOM: Stow Recorder

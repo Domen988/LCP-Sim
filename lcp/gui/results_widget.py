@@ -61,11 +61,25 @@ class ResultsWidget(QWidget):
              # Inject the Kernel into Recorder (We share the one from ResultsWidget)
              self.recorder.set_kernel(self.kernel)
              
+             # Inject Viewport if available
+             if hasattr(self, '_viewport'):
+                 self.recorder.set_viewport(self._viewport)
+             
              # CONNECT SIGNAL: Recorder -> Viewport Update
              # We need to bridge this signal to the outside (MainWindow)
              # Let's define a new signal on ResultsWidget or reuse?
              # We can define `recorder_update` signal on ResultsWidget and emit it
              self.recorder.preview_update.connect(self.on_recorder_preview)
+
+    @property
+    def viewport(self):
+        return getattr(self, '_viewport', None)
+
+    @viewport.setter
+    def viewport(self, val):
+        self._viewport = val
+        if hasattr(self, 'recorder') and self.recorder:
+            self.recorder.set_viewport(val)
 
     def on_recorder_preview(self, az, el, safety, states):
          # Re-emit to MainWindow via existing signal?

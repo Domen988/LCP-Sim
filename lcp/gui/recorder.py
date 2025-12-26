@@ -15,6 +15,12 @@ from lcp.gui.state import AppState
 from lcp.core.stow import StowProfile
 from lcp.physics.engine import InfiniteKernel
 
+try:
+    from PIL import Image
+    HAS_PIL = True
+except ImportError:
+    HAS_PIL = False
+
 class StowRecorder(QWidget):
     """
     New Stow Recorder Tab.
@@ -66,6 +72,9 @@ class StowRecorder(QWidget):
         
     def set_kernel(self, kernel: InfiniteKernel):
         self.kernel = kernel
+
+    def set_viewport(self, viewport):
+        self.viewport = viewport
         
     def setup_ui(self):
         main_layout = QHBoxLayout(self)
@@ -205,6 +214,15 @@ class StowRecorder(QWidget):
         
         gb_act.setLayout(act_l)
         l_layout.addWidget(gb_act)
+        
+        # 6. Export
+        gb_exp = QGroupBox("Export")
+        exp_l = QVBoxLayout()
+        self.btn_export_gif = QPushButton("Export Selection as GIF")
+        self.btn_export_gif.clicked.connect(self.export_gif)
+        exp_l.addWidget(self.btn_export_gif)
+        gb_exp.setLayout(exp_l)
+        l_layout.addWidget(gb_exp)
         
         # 6. Profile Management
         gb_file = QGroupBox("Stow Profile")
@@ -957,4 +975,53 @@ class StowRecorder(QWidget):
             QMessageBox.critical(self, "Error", f"Load failed: {e}")
         finally:
             self.blockSignals(False)
+            QApplication.restoreOverrideCursor()
+
+    def export_gif(self):
+        if not HAS_PIL:
+            QMessageBox.critical(self, "Error", "PIL (Pillow) library not found.\nPlease install it to use this feature.")
+            return
+
+        if not hasattr(self, 'viewport') or not self.viewport:
+            QMessageBox.critical(self, "Error", "Viewport not linked via MainWindow.")
+            return
+
+        # Ensure frames exist (User selection flow)
+        if not self.generate_smooth_frames(): return
+        
+        path, _ = QFileDialog.getSaveFileName(self, "Save GIF Animation", "", "GIF Files (*.gif)")
+        if not path: return
+        
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        try:
+            images = []
+            
+            # Loop
+            for i in range(len(self.smooth_frames)):
+                # Update State
+                self.update_smooth_viz(i)
+                QApplication.processEvents() # Force Redraw
+                
+                # Capture
+                qimg = self.viewport.grabFramebuffer()
+                
+                # Convert QImage -> PIL
+                qimg = qimg.convertToFormat(qimg.Format.Format_RGBA8888)
+                w, h = qimg.width(), qimg.height()
+                ptr = qimg.bits()
+                ptr.setsize(qimg.sizeInBytes())
+                
+                raw = bytes(ptr)
+                img = Image.frombytes("RGBA", (w, h), raw)
+                images.append(img)
+                
+            # Save
+            if images:
+                # durations is in ms. We used 30ms timer ~ 33fps.
+                images[0].save(path, save_all=True, append_images=images[1:], duration=33, loop=0)
+                QMessageBox.information(self, "Success", f"GIF exported to {path}")
+                
+        except Exception as e:
+            QMessageBox.critical(self, "Export Error", str(e))
+        finally:
             QApplication.restoreOverrideCursor()
