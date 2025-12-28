@@ -84,17 +84,20 @@ class InfiniteKernel:
                        active_override: Optional[Tuple[float, float]] = None) -> Tuple[List[PanelState], bool]:
         """
         Solves the state of the 3x3 kernel for a given sun position.
-        inactive_override: (az, el) for Even panels (Stow Group).
-        active_override: (az, el) for Odd panels (Active/Tracking Group).
+        Legacy Scalar Method.
         """
+        # Wrap the scalar input into arrays and use solve_timeseries
+        # For full correctness including overrides, we might keep the old logic or adapt.
+        # But for optimization, let's keep old logic intact to avoid breaking overrides that might change per step?
+        # Actually overrides are usually fixed for a run scenario.
+        # Let's keep the existing implementation of solve_timestep for safety/regression testing
+        # and add solve_timeseries as a new high-speed path.
+        return self._solve_timestep_scalar(sun_az, sun_el, enable_safety, inactive_override, active_override)
+
+    def _solve_timestep_scalar(self, sun_az, sun_el, enable_safety, inactive_override, active_override):
+        # ... (Previous Implementation Logic - pasted back to ensure continuity)
         # 1. Calculate Ideal Tracking Orientation
         min_el = getattr(self.cfg, 'min_elevation', 15.0)
-        
-        # We always clamp the tracking elevation to the minimum allowed
-        # Careful: sun_el is the actual sun position. 
-        # target_rot is the panel orientation.
-        # If Sun is at 5 deg, Panel should be at 15 deg (closest it can get).
-        
         target_el = max(min_el, sun_el)
         target_rot = self.rig.get_orientation(sun_az, target_el)
             
@@ -121,9 +124,8 @@ class InfiniteKernel:
                 if manual_inactive_rot is not None:
                     rot_map[idx] = manual_inactive_rot
                 else:
-                    rot_map[idx] = target_rot # Default to Track if no override
+                    rot_map[idx] = target_rot 
             else:
-                # Active Group
                 if manual_active_rot is not None:
                     rot_map[idx] = manual_active_rot
                 else:
@@ -133,11 +135,9 @@ class InfiniteKernel:
             for j in range(i + 1, len(idx_list)):
                 idx_i = idx_list[i]
                 idx_j = idx_list[j]
-                
                 r_i = rot_map[idx_i]
                 r_j = rot_map[idx_j]
                 
-                # Check Clash
                 if np.array_equal(r_i, r_j): 
                     c_res = self.collider.check_clash(self.pivots[idx_i], self.pivots[idx_j], r_i, rot_b=None)
                 else:
@@ -150,7 +150,6 @@ class InfiniteKernel:
                 break
                 
         # 3. Determine Modes & Kinematics (Pass 1)
-        # Default Auto-Stow
         stow_rot = self.rig.get_orientation(sun_az, 45.0)
         
         rad_az = np.radians(sun_az)
@@ -167,12 +166,6 @@ class InfiniteKernel:
             for c in range(3):
                 idx = (r,c)
                 is_stow_group = ((r + c) % 2 == 0)
-                
-                # Logic Priority:
-                # 1. Manual Override (Active or Inactive)
-                # 2. Safety Stow (if collision & safety on & is stow group)
-                # 3. Tracking
-                
                 rot = target_rot
                 mode = "TRACKING"
                 
@@ -184,12 +177,9 @@ class InfiniteKernel:
                          mode = "STOW"
                          rot = stow_rot
                 else:
-                    # Active Group
                     if manual_active_rot is not None:
                          mode = "MANUAL_ACTIVE"
                          rot = manual_active_rot
-                    # Even if collision, Active group tracks (unless we define Active Safety?)
-                    # Current definitions say Active tracks sun always or manually overriden.
                 
                 panel_kinematics[idx] = (self.pivots[idx], rot, mode)
         
@@ -200,8 +190,6 @@ class InfiniteKernel:
             for c in range(3):
                 idx = (r,c)
                 pos, rot, mode = panel_kinematics[idx]
-                
-                # Use Virtual Neighbors for infinite plant emulation
                 v_neighbors = self._get_virtual_neighbors(r, c, pos, rot)
                 
                 if collision_detected:
@@ -210,22 +198,14 @@ class InfiniteKernel:
                 else:
                     shad_loss, shad_polys = self.shadower.calculate_loss(pos, rot, v_neighbors, sun_vec)
                 
-                # Cosine Loss
                 normal = rot[:, 2]
                 cos_theta = max(0.0, np.dot(normal, sun_vec))
-                
                 stow_loss = 1.0 if "STOW" in mode else 0.0
                 
                 if "STOW" in mode:
                     p_factor = 0.0 
                 else:
-                    # STRICT POINTING EFFICIENCY:
-                    # If the panel is not pointing directly at the sun (with small tolerance),
-                    # power drops to 0. This enforces the rule that if min_elevation prevents
-                    # direct alignment, we get 0 power.
-                    # cos(0.8 deg) ~= 0.9999
                     pointing_threshold = 0.9999
-                    
                     if cos_theta < pointing_threshold:
                          p_factor = 0.0
                     else:
@@ -245,3 +225,115 @@ class InfiniteKernel:
                 ))
                 
         return states, collision_detected
+
+    def solve_timeseries(self, az_array: np.ndarray, el_array: np.ndarray) -> Dict[str, np.ndarray]:
+        """
+        Vectorized solver for the full time series.
+        Returns dictionary of arrays: 'power_factor', 'collision', 'mode', etc.
+        (Simplified: Assuming no manual overrides for now)
+        """
+        N = len(az_array)
+        min_el = getattr(self.cfg, 'min_elevation', 15.0)
+        
+        # 1. Kinematics (Vectorized)
+        target_el = np.maximum(min_el, el_array)
+        
+        # (N, 3, 3)
+        target_rots = self.rig.get_orientation(az_array, target_el)
+        stow_rots = self.rig.get_orientation(az_array, np.full(N, 45.0))
+        
+        # Sun Vectors (N, 3)
+        phi_s = np.radians(az_array)
+        theta_s = np.radians(90 - el_array)
+        sx = np.sin(theta_s) * np.sin(phi_s)
+        sy = np.sin(theta_s) * np.cos(phi_s)
+        sz = np.cos(theta_s)
+        sun_vecs = np.stack((sx, sy, sz), axis=-1)
+        
+        # 2. Collision Detection (Vectorized)
+        # We assume all panels track target_rot.
+        # Check adjacent pairs in 3x3 grid.
+        # Pairs: Horizontal (0,0)-(0,1), etc. Vertical (0,0)-(1,0), etc.
+        # Actually, since it's an infinite uniform grid assumption, we just need to check
+        # one representative interaction types? 
+        # But we have specific neighbors.
+        # Let's check all unique neighbor pairs in 3x3.
+        
+        clash_mask = np.zeros(N, dtype=bool)
+        
+        idx_list = list(self.pivots.keys())
+        for i in range(len(idx_list)):
+            for j in range(i + 1, len(idx_list)):
+                idx_i = idx_list[i]
+                idx_j = idx_list[j]
+                
+                # Check Parallel Clash (Vectorized)
+                # target_rots is shared by all panels in idealized tracking
+                # Pass SAME rotation array for both A and B
+                c_res = self.collider.check_clash(self.pivots[idx_i], self.pivots[idx_j], target_rots, rot_b=None)
+                
+                clash_mask |= c_res
+                
+        # 3. Hybrid Shadow Loop
+        # We calculate shadows only where:
+        # a) Sun is up (el > 0)
+        # b) No collision (Safety stow -> Shadow=0)
+        
+        valid_mask = (el_array > 0) & (~clash_mask)
+        valid_indices = np.where(valid_mask)[0]
+        
+        shadow_factors = np.zeros(N)
+        
+        # We pick the Center Panel (1,1) as the representative for yield
+        center_idx = (1,1)
+        center_pos = self.pivots[center_idx]
+        
+        # Pre-fetch neighbors offsets for (1,1) - usually all 8 neighbors
+        neighbor_offsets = self.neighbor_map[center_idx]
+        
+        # Loop mainly for geometry
+        for i in valid_indices:
+            rot = target_rots[i] # (3,3)
+            sun = sun_vecs[i]   # (3,)
+            
+            # Virtual neighbors for (1,1)
+            v_neighbors = [(center_pos + off, rot) for off in neighbor_offsets]
+            
+            loss, _ = self.shadower.calculate_loss(center_pos, rot, v_neighbors, sun)
+            shadow_factors[i] = loss
+            
+        # 4. Final Aggregation
+        # Power Factor = CosTheta * (1 - Shadow) * Availability
+        # Normal vector is 3rd column of rot
+        # For Tracking: target_rots
+        # For Stow: stow_rots
+        
+        # Construct final arrays
+        final_rots = target_rots.copy()
+        final_rots[clash_mask] = stow_rots[clash_mask]
+        
+        # Normals (N, 3)
+        normals = final_rots[:, 2, :] # Access (N, 3, 3) -> (N, 3)
+        
+        # Dot Product (N, 3) . (N, 3) -> (N,)
+        # einsum 'ij,ij->i'
+        cos_theta = np.einsum('ij,ij->i', normals, sun_vecs)
+        cos_theta = np.maximum(0.0, cos_theta)
+        
+        # Pointing Efficiency Threshold
+        pointer_mask = cos_theta < 0.9999
+        
+        power_factors = cos_theta * (1.0 - shadow_factors)
+        
+        # Apply masks
+        # If Stow (clash): Power=0
+        power_factors[clash_mask] = 0.0
+        # If Bad Pointing: Power=0 (Only if not stowed? Stow is 0 anyway)
+        power_factors[pointer_mask] = 0.0
+        
+        return {
+            'power_factors': power_factors,
+            'collision_mask': clash_mask,
+            'shadow_factors': shadow_factors,
+            'sun_vecs': sun_vecs
+        }

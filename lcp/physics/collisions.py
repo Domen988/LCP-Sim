@@ -32,33 +32,51 @@ class CollisionDetector:
                     pivot_a: np.ndarray, 
                     pivot_b: np.ndarray, 
                     rot_a: np.ndarray,
-                    rot_b: np.ndarray = None) -> bool:
+                    rot_b: np.ndarray = None) -> bool | np.ndarray:
         """
         Checks collision between Panel A and Panel B.
         If rot_b is None, assumes parallel panels (Optimized).
         If rot_b is provided, uses Separating Axis Theorem (SAT).
+        Supports vectorized inputs for rot_a (N, 3, 3).
         """
         if rot_b is None:
             return self._check_parallel(pivot_a, pivot_b, rot_a)
         else:
+            # SAT Not Vectorized yet
+            if rot_a.ndim == 3:
+                raise NotImplementedError("Vectorized SAT check not implemented.")
             return self._check_sat(pivot_a, pivot_b, rot_a, rot_b)
 
     def _check_parallel(self, pivot_a, pivot_b, rotation_matrix):
         # Vector D in Global Frame
         global_d = pivot_b - pivot_a
         
-        # Rotate D into Local Frame of Panel A
-        local_d = rotation_matrix.T @ global_d
+        # Handle Vectorization
+        if rotation_matrix.ndim == 3:
+            # rotation_matrix shape: (N, 3, 3)
+            # Transpose of each matrix: (N, 3, 3) -> swap last two axes
+            rot_T = np.swapaxes(rotation_matrix, 1, 2)
+            
+            # Matmul: (N, 3, 3) @ (3,) -> (N, 3)
+            # broadcasting global_d (3,) across N
+            local_d = np.matmul(rot_T, global_d)
+        else:
+            # Scalar case
+            local_d = rotation_matrix.T @ global_d
         
-        dx, dy, dz = np.abs(local_d)
+        dx, dy, dz = np.abs(local_d.T) # Unpack columns (N, 3) -> (3, N)
+        # If scalar, unpacks (3,) -> dx, dy, dz scalars
         
         limit_x = self.geo.width + self.cfg.tolerance
         limit_y = self.geo.length + self.cfg.tolerance
         limit_z = self.geo.thickness + self.cfg.tolerance
         
-        if (dx < limit_x) and (dy < limit_y) and (dz < limit_z):
-            return True
-        return False
+        # Vectorized comparison
+        clash_x = dx < limit_x
+        clash_y = dy < limit_y
+        clash_z = dz < limit_z
+        
+        return clash_x & clash_y & clash_z
 
     def _check_sat(self, pivot_a, pivot_b, rot_a, rot_b):
         """

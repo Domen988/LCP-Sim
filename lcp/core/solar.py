@@ -19,18 +19,34 @@ class SolarCalculator:
     def __init__(self, lat=-25.8633, lon=26.8983):
         self.loc = Location(lat, lon, tz='Africa/Johannesburg', name='Koster')
         
-    def get_position(self, dt: datetime) -> SunPosition:
+    def get_position(self, dt: datetime | pd.DatetimeIndex) -> SunPosition | pd.DataFrame:
         """
         Calculates high-precision solar position.
-        Accepts naive datetime (assumed Local) or aware datetime.
+        Accepts scalar datetime or DatetimeIndex.
+        Returns SunPosition (scalar) or DataFrame (columns: azimuth, elevation).
         """
-        ts = pd.Timestamp(dt)
-        if ts.tz is None:
-            ts = ts.tz_localize(self.loc.tz)
+        is_scalar = isinstance(dt, (datetime, pd.Timestamp))
+        
+        ts = dt
+        if is_scalar:
+            ts = pd.Timestamp(dt)
+            if ts.tz is None:
+                ts = ts.tz_localize(self.loc.tz)
+            else:
+                ts = ts.tz_convert(self.loc.tz)
+        else:
+            # Vectorized Case
+            if ts.tz is None:
+                ts = ts.tz_localize(self.loc.tz)
+            else:
+                ts = ts.tz_convert(self.loc.tz)
             
         pos = self.loc.get_solarposition(ts)
         
-        return SunPosition(
-            azimuth=float(pos['azimuth'].iloc[0]), 
-            elevation=float(pos['elevation'].iloc[0])
-        )
+        if is_scalar:
+            return SunPosition(
+                azimuth=float(pos['azimuth'].iloc[0]), 
+                elevation=float(pos['elevation'].iloc[0])
+            )
+        else:
+            return pos[['azimuth', 'elevation']]
