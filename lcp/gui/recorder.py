@@ -76,6 +76,20 @@ class StowRecorder(QWidget):
     def set_viewport(self, viewport):
         self.viewport = viewport
         
+    # --- Azimuth Mapping Helpers ---
+    # Slider (0..3600) -> Azimuth (0..360) where Slider 1800 -> Az 0 (North)
+    # Mapping: Az = (SliderVal/10.0 + 180) % 360
+    # Inverse: SliderVal = ((Az - 180) % 360) * 10
+    
+    def slider_to_az(self, val):
+        return (val / 10.0 + 180.0) % 360.0
+        
+    def az_to_slider(self, az):
+        return int(((az - 180.0) % 360.0) * 10)
+        # Check: Az=0 -> -180%360 = 180 -> 1800. Correct.
+        # Check: Az=180 -> 0 -> 0. Correct.
+        # Check: Az=181 -> 1 -> 10. Correct.
+    
     def setup_ui(self):
         main_layout = QHBoxLayout(self)
         
@@ -400,7 +414,7 @@ class StowRecorder(QWidget):
             # Update Inactive
             self.sl_in_az.blockSignals(True)
             self.sl_in_el.blockSignals(True)
-            self.sl_in_az.setValue(int(in_az * 10))
+            self.sl_in_az.setValue(self.az_to_slider(in_az))
             self.sl_in_el.setValue(int(in_el * 10))
             self.lbl_in_az.setText(f"Inactive Az: {in_az:.1f}°")
             self.lbl_in_el.setText(f"Inactive El: {in_el:.1f}°")
@@ -410,7 +424,7 @@ class StowRecorder(QWidget):
             # Update Active
             self.sl_act_az.blockSignals(True)
             self.sl_act_el.blockSignals(True)
-            self.sl_act_az.setValue(int(act_az * 10))
+            self.sl_act_az.setValue(self.az_to_slider(act_az))
             self.sl_act_el.setValue(int(act_el * 10))
             self.lbl_act_az.setText(f"Active Az: {act_az:.1f}°")
             self.lbl_act_el.setText(f"Active El: {act_el:.1f}°")
@@ -423,9 +437,9 @@ class StowRecorder(QWidget):
             pass
             
     def on_teach_change(self):
-        in_az = self.sl_in_az.value() / 10.0
+        in_az = self.slider_to_az(self.sl_in_az.value())
         in_el = self.sl_in_el.value() / 10.0
-        act_az = self.sl_act_az.value() / 10.0
+        act_az = self.slider_to_az(self.sl_act_az.value())
         act_el = self.sl_act_el.value() / 10.0
         
         self.lbl_in_az.setText(f"Inactive Az: {in_az:.1f}°")
@@ -447,7 +461,7 @@ class StowRecorder(QWidget):
         sun_az = float(self.table.item(self.current_idx, 2).text())
         sun_el = float(self.table.item(self.current_idx, 3).text())
         
-        self.sl_in_az.setValue(int(sun_az * 10))
+        self.sl_in_az.setValue(self.az_to_slider(sun_az))
         self.sl_in_el.setValue(int(sun_el * 10))
         # Trigger checked by signal
         
@@ -456,7 +470,7 @@ class StowRecorder(QWidget):
         sun_az = float(self.table.item(self.current_idx, 2).text())
         sun_el = float(self.table.item(self.current_idx, 3).text())
         
-        self.sl_act_az.setValue(int(sun_az * 10))
+        self.sl_act_az.setValue(self.az_to_slider(sun_az))
         self.sl_act_el.setValue(int(sun_el * 10))
 
     def on_table_edit(self, row, col):
