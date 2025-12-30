@@ -139,7 +139,8 @@ class StowRecorder(QWidget):
         # Elevation
         self.lbl_in_el = QLabel("Inactive El: 0.0°")
         self.sl_in_el = QSlider(Qt.Orientation.Horizontal)
-        self.sl_in_el.setRange(0, 900)
+        min_el_val = int(self.state.config.min_elevation * 10)
+        self.sl_in_el.setRange(min_el_val, 900)
         self.sl_in_el.valueChanged.connect(self.on_teach_change)
         
         self.btn_reset_inactive = QPushButton("Reset Inactive (to Sun)")
@@ -166,7 +167,7 @@ class StowRecorder(QWidget):
         # Elevation
         self.lbl_act_el = QLabel("Active El: 0.0°")
         self.sl_act_el = QSlider(Qt.Orientation.Horizontal)
-        self.sl_act_el.setRange(0, 900)
+        self.sl_act_el.setRange(min_el_val, 900)
         self.sl_act_el.valueChanged.connect(self.on_teach_change)
         
         self.btn_reset_active = QPushButton("Reset Active (to Sun)")
