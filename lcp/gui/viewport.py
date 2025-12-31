@@ -276,15 +276,20 @@ class PlantViewport(gl.GLViewWidget):
         pitch_y = s.config.grid_pitch_y
         
         # North Arrow 
-        theta_deg = -(-s.config.plant_rotation) # User requested negative rotation usage
+        theta_deg = s.config.plant_rotation # Visual works with positive rotation (CCW Arrow for CW Plant)
         c_a = np.cos(np.radians(theta_deg))
         s_a = np.sin(np.radians(theta_deg))
         
+        # DEBUG ARROW
+        # print(f"ARROW DEBUG: Theta={theta_deg}, C={c_a:.2f}, S={s_a:.2f}")
+        
         pts = self.arrow_base_pts.copy()
-        x = pts[:,0]
-        y = pts[:,1]
+        x = pts[:,0].copy()
+        y = pts[:,1].copy()
         pts[:,0] = x * c_a - y * s_a
         pts[:,1] = x * s_a + y * c_a
+        
+        # print(f"ARROW TIP (Rot): {pts[1]}")
         self.north_arrow.setData(pos=pts)
         
         tip = np.array([0, 6, 0.5])

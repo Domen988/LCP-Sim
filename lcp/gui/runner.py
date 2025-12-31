@@ -118,7 +118,7 @@ class SimulationWorker(QThread):
                     if sun.elevation <= 0:
                         continue
                         
-                    local_az = sun.azimuth - (-cfg.plant_rotation) # PLANT ROTATION
+                    local_az = sun.azimuth - cfg.plant_rotation # PLANT ROTATION
                     
                     # Solve
                     states, safety = runner.kernel.solve_timestep(local_az, sun.elevation, enable_safety=True)
