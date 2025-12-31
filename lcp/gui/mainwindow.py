@@ -2,6 +2,7 @@
 from PyQt6.QtWidgets import (QMainWindow, QDockWidget, QWidget)
 from PyQt6.QtGui import QIcon
 from PyQt6.QtCore import Qt
+import datetime
 
 from lcp.gui.state import AppState
 from lcp.gui.viewport import PlantViewport
@@ -130,11 +131,26 @@ class MainWindow(QMainWindow):
         self.update_teach_kernel()
         
         # Settings from State
-        start = self.state.sim_settings.start_date
-        days = 365 if self.state.sim_settings.full_year else self.state.sim_settings.duration_days
+        s = self.state.sim_settings
+        start = s.start_date
+        days = s.duration_days
+        
+        if s.full_year:
+             days = 365
+        elif s.around_solstice:
+             # Calculate Solstice based on Start Year
+             # User requested Dec 21 ONLY
+             year = start.year
+             solstice = datetime.date(year, 12, 21)
+                  
+             # Start = Solstice - Window
+             window = s.solstice_window
+             start = solstice - datetime.timedelta(days=window)
+             days = window * 2 # Total window
+             
+             print(f"Solstice Mode: Dec 21 ({solstice}) -> Start: {start}, Days: {days}")
         
         # Worker
-        import datetime
         dt_start = datetime.datetime.combine(start, datetime.time.min)
         
         self.worker = SimulationWorker(self.state, dt_start, days)
