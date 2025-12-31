@@ -13,6 +13,7 @@ from datetime import datetime
 from lcp.physics.engine import InfiniteKernel, PanelState
 from lcp.gui.landscape_widget import AnnualLandscapeWidget
 from lcp.gui.recorder import StowRecorder
+from lcp.gui.failure_analysis import FailureAnalysisWidget
 from lcp.app.theme import Theme
 
 class ResultsWidget(QWidget):
@@ -80,6 +81,8 @@ class ResultsWidget(QWidget):
         self._viewport = val
         if hasattr(self, 'recorder') and self.recorder:
             self.recorder.set_viewport(val)
+        if hasattr(self, 'fail_widget') and self.fail_widget:
+            self.fail_widget.set_viewport(val)
 
     def on_recorder_preview(self, az, el, safety, states):
          # Re-emit to MainWindow via existing signal?
@@ -114,6 +117,23 @@ class ResultsWidget(QWidget):
         # Toggle Removed by user request.
         # We now ALWAYS visualize tracking/stow-safe states but we don't switch logic on user toggle.
         pass
+
+    def on_start_mech_fail(self):
+        if not self.current_day_data: return
+        
+        if not hasattr(self, 'fail_widget') or self.fail_widget is None:
+             self.fail_widget = FailureAnalysisWidget(self.state)
+             if hasattr(self, '_viewport'):
+                 self.fail_widget.set_viewport(self._viewport)
+             elif hasattr(self, 'viewport') and self.viewport:
+                 self.fail_widget.set_viewport(self.viewport)
+             else:
+                 print("ResultsWidget: Warning - Viewport not found for FailureAnalysisWidget")
+                 
+             self.tabs.addTab(self.fail_widget, "Mechanical Failure Analysis")
+             
+        self.tabs.setCurrentWidget(self.fail_widget)
+        self.fail_widget.load_data(self.current_day_data.get('frames', []))
              
     def clear(self):
         self.all_data = []
@@ -205,6 +225,11 @@ class ResultsWidget(QWidget):
         self.btn_create_stow = QPushButton("Create Stow Profile for Selected Day")
         self.btn_create_stow.clicked.connect(self.on_create_stow_profile)
         l_layout.addWidget(self.btn_create_stow)
+
+        # Mech Fail Button
+        self.btn_mech_fail = QPushButton("Start mechanical failure analysis for selected day")
+        self.btn_mech_fail.clicked.connect(self.on_start_mech_fail)
+        l_layout.addWidget(self.btn_mech_fail)
         
         # Table
         self.table = QTableWidget()
