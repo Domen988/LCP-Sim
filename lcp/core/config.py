@@ -13,3 +13,7 @@ class ScenarioConfig:
     total_panels: int = 2400 # 60x40 default
     plant_rotation: float = 5.0 # Clockwise from North
     min_elevation: float = 15.0 # Degrees (User requests min 15°)
+    
+    # 4x4 Field Configuration
+    field_spacing_x: float = 2.3 # Pivot-to-Pivot between fields (X)
+    field_spacing_y: float = 2.4 # Pivot-to-Pivot between fields (Y)

@@ -291,8 +291,27 @@ class FailureAnalysisWidget(QWidget):
                             n_R = R_healthy 
                             
                        # Relative Pivot
-                       # Neighbor Pos relative to Current is (dc * px, dr * py, 0)
-                       rel_pos = np.array([float(dc * px), float(dr * py), 0.0])
+                       # Need to account for Field Spacing!
+                       # We calculate absolute positions for r,c and nr,nc (with offset 0) and subtract.
+                       
+                       def get_abs_pos(row, col):
+                            f_sp_x = getattr(self.state.config, 'field_spacing_x', px)
+                            f_sp_y = getattr(self.state.config, 'field_spacing_y', py)
+                            
+                            fc = col // 4
+                            lc = col % 4
+                            stride_x = (3 * px) + f_sp_x
+                            x = (fc * stride_x) + (lc * px)
+                            
+                            fr = row // 4
+                            lr = row % 4
+                            stride_y = (3 * py) + f_sp_y
+                            y = (fr * stride_y) + (lr * py)
+                            return np.array([x, y, 0.0])
+
+                       pos_me = get_abs_pos(r, c)
+                       pos_neighbor = get_abs_pos(nr, nc)
+                       rel_pos = pos_neighbor - pos_me
                        
                        # Call Collider
                        # We use local frame: Pivot A = (0,0,0), Pivot B = rel_pos

@@ -140,8 +140,19 @@ class PlantViewport(gl.GLViewWidget):
         px = self.state.config.grid_pitch_x
         py = self.state.config.grid_pitch_y
         
-        w = cols * px
-        h = rows * py
+        w = cols * px # Estimate
+        h = rows * py # Estimate
+        
+        # Better estimate with fields
+        f_sp_x = getattr(self.state.config, 'field_spacing_x', px)
+        f_sp_y = getattr(self.state.config, 'field_spacing_y', py)
+        
+        if cols > 0:
+             lc = cols - 1
+             w = (lc // 4) * ((3 * px) + f_sp_x) + (lc % 4) * px
+        if rows > 0:
+             lr = rows - 1
+             h = (lr // 4) * ((3 * py) + f_sp_y) + (lr % 4) * py
         dim = max(w, h)
         
         dist = dim * 1.5 + 50
@@ -319,8 +330,23 @@ class PlantViewport(gl.GLViewWidget):
              r_start, r_end = 0, rows
              c_start, c_end = 0, cols
              
-             off_x = (cols - 1) * pitch_x / 2
-             off_y = (rows - 1) * pitch_y / 2
+             # Calculate total width/height with gaps
+             f_sp_x = getattr(s.config, 'field_spacing_x', pitch_x)
+             f_sp_y = getattr(s.config, 'field_spacing_y', pitch_y)
+             
+             last_col = cols - 1
+             l_field_c = last_col // 4
+             l_local_c = last_col % 4
+             field_stride_x = (3 * pitch_x) + f_sp_x
+             total_w = (l_field_c * field_stride_x) + (l_local_c * pitch_x)
+             off_x = total_w / 2.0
+
+             last_row = rows - 1
+             l_field_r = last_row // 4
+             l_local_r = last_row % 4
+             field_stride_y = (3 * pitch_y) + f_sp_y
+             total_h = (l_field_r * field_stride_y) + (l_local_r * pitch_y)
+             off_y = total_h / 2.0
         
         # Buffers
         all_verts = []
@@ -443,8 +469,34 @@ class PlantViewport(gl.GLViewWidget):
                      if st.mode and ("STOW" in st.mode): color = c_stow
                      if st.shadow_polys: shad_polys = st.shadow_polys
                 
-                px = (c * pitch_x) - off_x
-                py = (r * pitch_y) - off_y
+                # FIELD SPACING LOGIC
+                # Fields are 4x4.
+                # Pitch is uniform within a field.
+                # But between Field Col 3 and Field Col 4 (Local 3->0), we add field_spacing_x.
+                # Actually field_spacing is "Pivot to Pivot" between fields.
+                # Standard spacing is pitch.
+                # So the "jump" is field_spacing.
+                # Coordinate = (field_idx * field_stride) + (local_idx * pitch)
+                # Field Stride = (3 * pitch) + field_spacing
+                
+                # However, if field_spacing isn't defined, default to pitch? 
+                # Config has default.
+                
+                f_sp_x = getattr(s.config, 'field_spacing_x', pitch_x)
+                f_sp_y = getattr(s.config, 'field_spacing_y', pitch_y)
+                
+                # X Calc
+                field_c = c // 4
+                local_c = c % 4
+                field_stride_x = (3 * pitch_x) + f_sp_x
+                px = (field_c * field_stride_x) + (local_c * pitch_x) - off_x
+                
+                # Y Calc
+                field_r = r // 4
+                local_r = r % 4
+                field_stride_y = (3 * pitch_y) + f_sp_y
+                py = (field_r * field_stride_y) + (local_r * pitch_y) - off_y
+                
                 pz = s.geometry.pivot_offset[2] + 2.0
                 pos = np.array([px, py, pz])
                 
