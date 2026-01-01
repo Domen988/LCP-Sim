@@ -203,7 +203,7 @@ class PersistenceManager:
                     day_ts = ts_df[mask]
                     
                     for _, ts_row in day_ts.iterrows():
-                        frames.append({
+                        frame_dict = {
                             "time": ts_row['time'].to_pydatetime(),
                             "sun_az": float(ts_row['sun_az']),
                             "sun_el": float(ts_row['sun_el']),
@@ -211,7 +211,18 @@ class PersistenceManager:
                             "act_w": float(ts_row['act_w']),
                             "theo_w": float(ts_row['theo_w']),
                             "states": [] # Empty states indicates no 3D data loaded
-                        })
+                        }
+                        
+                        # Load Stow Columns if present
+                        try:
+                            if 'stow_az' in ts_row and pd.notna(ts_row['stow_az']):
+                                 frame_dict['stow_az'] = float(ts_row['stow_az'])
+                            if 'stow_el' in ts_row and pd.notna(ts_row['stow_el']):
+                                 frame_dict['stow_el'] = float(ts_row['stow_el'])
+                        except Exception:
+                            pass
+                             
+                        frames.append(frame_dict)
 
                 res_obj = {
                     "summary": summary,

@@ -24,6 +24,7 @@ from lcp.app.visualizer import PlantVisualizer
 from lcp.app.visualizer import PlantVisualizer
 from lcp.app.theme import Theme
 from lcp.core.persistence import PersistenceManager
+from lcp.analysis.stow_strategy import StowStrategyGenerator
 
 PLANT_ROTATION = 5.0
 
@@ -150,6 +151,58 @@ with st.sidebar.expander("Simulation Settings", expanded=False):
         st.number_input("Duration (Days)", value=365, disabled=True, key="sim_days_disp")
     else:
         sim_days = st.number_input("Duration (Days)", 1, 3650, 3) 
+
+# Stow Strategy Generator
+with st.sidebar.expander("Stow Strategy Generator", expanded=True):
+    st.caption("Generate safe stow paths for clash events.")
+    
+    # Input: Select a Simulation to Process
+    # We list folders in saved_simulations
+    sim_list = pm.list_simulations()
+    target_sim = st.selectbox("Source Simulation", sim_list, index=0 if sim_list else None)
+    
+    stg_min_gap = st.number_input("Min Safe Interval (min)", 1, 60, 5)
+    stg_safe_el = st.number_input("Safe Stow Elevation (deg)", 0.0, 90.0, 30.0)
+    stg_offset = st.number_input("Westward Offset (deg)", 0.0, 180.0, 45.0)
+    stg_speed = st.number_input("Max Motor Speed (deg/min)", 1.0, 120.0, 20.0)
+    
+    if st.button("Generate Strategy"):
+        if not target_sim:
+            st.error("Select a simulation first.")
+        else:
+            with st.spinner("Generating Strategy..."):
+                try:
+                    # Construct paths
+                    sim_dir = os.path.join(pm.base_path, target_sim)
+                    # We usually look for 'timeseries.csv' which has the detailed data
+                    # But per persistence, detailed data is in timeseries.csv
+                    # However, results.csv is summary.
+                    # Stow Strategy needs the timeseries.
+                    
+                    # Check for timeseries.csv
+                    ts_path = os.path.join(sim_dir, "timeseries.csv")
+                    if not os.path.exists(ts_path):
+                         # Fallback to results.csv if flattened? 
+                         # No, persistence saves frames to timeseries.csv
+                         st.error("timeseries.csv not found in simulation.")
+                    else:
+                        gen = StowStrategyGenerator(
+                            min_safe_interval_min=stg_min_gap,
+                            safe_stow_el=stg_safe_el,
+                            westward_offset_deg=stg_offset,
+                            max_motor_speed_deg_per_min=stg_speed
+                        )
+                        
+                        out_name = f"{target_sim}_With_Stow.csv"
+                        out_path = os.path.join(sim_dir, out_name)
+                        
+                        df_aug = gen.process_csv(ts_path, output_path=out_path)
+                        
+                        st.success(f"Generated: {out_name}")
+                        st.info(f"File saved to: {out_path}")
+                        
+                except Exception as e:
+                    st.error(f"Generation Failed: {e}")
 
 # Run Button
 if st.sidebar.button("Run Simulation", type="primary"):
@@ -792,12 +845,112 @@ elif view_mode == "3D Analysis":
 
         
         st.markdown("### Controls")
+        
+        # Profile Mode Selector
+        # Check if we have stow columns in the loaded frames?
+        # SimulationRunner frames usually don't have 'stow_az' unless we loaded them from the CSV.
+        # BUT: The PersistenceManager loads 'frames' from timeseries.csv.
+        # If 'stow_az' was in timeseries.csv, it should be in the dict loaded.
+        
+        has_stow_data = False
+        if day_frames_light and 'stow_az' in day_frames_light[0]:
+             # Check if not all NaN?
+             has_stow_data = True
+             
+        profile_mode = "Standard Tracking"
+        if has_stow_data:
+             profile_mode = st.radio("Active Profile", ["Standard Tracking", "Stow Strategy"], index=1)
+        else:
+             st.caption("No Stow Strategy loaded.")
+        
         enable_anim = st.checkbox("Smooth Animation", value=False)
         show_rays = st.checkbox("Show Sunrays", value=False)
         show_pivots = st.checkbox("Show Pivots", value=True)
         show_stow = st.checkbox("Stow", value=True, help="Uncheck to see collisions (Safety Off)")
         show_clash_emphasis = st.checkbox("Clash Emphasis", value=True, help="Highlight Stow/Clash in Red/Orange. Disable to see shadows.")
         show_full_plant = st.checkbox("Show Full Plant", value=False)
+        
+        # --- SLIDER ---
+        total_frames = len(day_frames_light)
+        # Initialize session state for slider
+        if 'viz_slider' not in st.session_state:
+            st.session_state['viz_slider'] = 0
+            
+        # Callback to update slider state
+        def update_slider():
+            st.session_state['viz_slider'] = st.session_state.slider_widget
+            
+        cur_frame_idx = st.slider("Time", 0, total_frames - 1, key="slider_widget", on_change=update_slider)
+        # Sync simple int
+        cur_frame_idx = st.session_state['slider_widget']
+        
+        frame = day_frames_light[cur_frame_idx]
+        
+        # Determine Angles based on Mode
+        target_az = frame['sun_az']
+        target_el = frame['sun_el']
+        
+        if profile_mode == "Stow Strategy":
+             # Use stow columns if valid
+             if pd.notna(frame.get('stow_az')):
+                  target_az = frame['stow_az']
+             if pd.notna(frame.get('stow_el')):
+                  target_el = frame['stow_el']
+        
+        dt_str = frame['time'].strftime("%H:%M")
+        
+        # --- INFO ---
+        with ph_frame_info.container():
+             st.markdown(f"**Time:** {dt_str}")
+             st.markdown(f"**Sun:** Az {frame['sun_az']:.1f}°, El {frame['sun_el']:.1f}°")
+             
+             if profile_mode == "Stow Strategy":
+                  st.markdown(f"**Panel Target:** Az {target_az:.1f}°, El {target_el:.1f}°")
+                  if frame.get('mode'):
+                       st.markdown(f"**Mode:** {frame['mode']}")
+             else:
+                  st.markdown(f"**Safety:** {'❌ Clash' if frame['safety'] else '✅ Safe'}")
+
+        # --- RENDER ---
+        # Recalculate State for Visualization (using target angles)
+        # We need to re-run kinematics for visualization if we changed angles?
+        # Existing frames have 'states' pre-calculated for Tracking.
+        # If showing Stow Strategy, we need to solve kinematics for target_az/target_el.
+        
+        viz_states = frame['states'] 
+        
+        if profile_mode == "Stow Strategy":
+             # Dynamic Solve
+             local_az = target_az - PLANT_ROTATION
+             # We assume target_el is already clamped? Or raw? StowStrategy uses SafeEl.
+             # Solve without safety override?
+             # If "Stow Strategy" is active, we just move panels to that angle.
+             # We treat it as an override.
+             
+             # But 'solve_timestep' calculates tracking based on sun.
+             # We need to force angles.
+             # InfiniteKernel.solve_timestep allows override?
+             # Looking at engine.py... solve_timestep takes 'active_override'
+             
+             # Calculate local override
+             # If mode is STOW, we might be stowing.
+             # Just force active_override to (local_az, target_el) for visualization
+             
+             v_states, v_safety = runner.kernel.solve_timestep(
+                  frame['sun_az'] - PLANT_ROTATION, frame['sun_el'], # Sun still drives shadows
+                  enable_safety=False, # Disable auto-safety, we control position manually
+                  active_override=(local_az, target_el) 
+             )
+             viz_states = v_states
+
+        fig = viz.render_scene(viz_states, 
+                               runner.solar.get_sun_vector(frame['sun_az'], frame['sun_el']), 
+                               show_rays=show_rays, 
+                               show_pivots=show_pivots,
+                               show_clash_emphasis=show_clash_emphasis)
+        
+        with col_right:
+             st.plotly_chart(fig, use_container_width=True)
 
     # --- RIGHT: VIZ & SLIDER & CHART ---
     with col_right:

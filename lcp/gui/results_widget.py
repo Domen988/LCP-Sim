@@ -1,7 +1,7 @@
 
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QTabWidget, QTableWidget, 
                              QTableWidgetItem, QHeaderView, QPushButton, QSlider, QLabel, 
-                             QSplitter, QFrame, QGridLayout, QGroupBox, QApplication)
+                             QSplitter, QFrame, QGridLayout, QGroupBox, QApplication, QComboBox)
 from PyQt6.QtCore import Qt, pyqtSignal, QTimer
 from PyQt6.QtGui import QColor, QFont
 import pyqtgraph as pg
@@ -305,6 +305,12 @@ class ResultsWidget(QWidget):
         self.btn_step_next = QPushButton("+1 ▶")
         self.btn_step_next.clicked.connect(lambda: self.step_replay(1))
         
+        # Replay Mode
+        self.cmb_mode = QComboBox()
+        self.cmb_mode.addItems(["Standard Tracking", "Stow Strategy"])
+        # If mode changes, we need to refresh the current frame
+        self.cmb_mode.currentIndexChanged.connect(lambda: self.update_instant_stats(self.replay_idx))
+        
         self.lbl_time = QLabel("--:--")
         self.lbl_time.setFont(QFont("Arial", 12, QFont.Weight.Bold))
         
@@ -314,6 +320,9 @@ class ResultsWidget(QWidget):
         ctrl_row.addWidget(self.btn_step_prev)
         ctrl_row.addWidget(self.lbl_time)
         ctrl_row.addWidget(self.btn_step_next)
+        ctrl_row.addSpacing(20)
+        ctrl_row.addWidget(QLabel("Mode:"))
+        ctrl_row.addWidget(self.cmb_mode)
         ctrl_row.addStretch()
         
         r_layout.addLayout(ctrl_row)
@@ -457,6 +466,11 @@ class ResultsWidget(QWidget):
         self.slider.setValue(0)
         self.slider.blockSignals(False)
         
+        # Check if stow data is available to enable/disable button
+        has_stow = any('stow_az' in f for f in self.current_frames)
+        # We could disable "Stow Strategy" combo if not available, but user might load later?
+        # Just check per frame is safest.
+        
         # Update Instant Stats for frame 0
         self.update_instant_stats(0)
         
@@ -486,6 +500,8 @@ class ResultsWidget(QWidget):
         # Lazy Init Kernel
         if not hasattr(self, 'kernel') or self.kernel is None:
              self.kernel = InfiniteKernel()
+        # Just in case kernel is still none? But we init in setter.
+        if self.kernel is None: return 
              
         # Update Kernel Physics
         s = self.state 
@@ -507,17 +523,11 @@ class ResultsWidget(QWidget):
         # Adjust Azimuth for Plant Rotation
         local_az = f['sun_az'] - (-s.config.plant_rotation)
         
-        # Use updated solve_timestep signature
-        # Convert overrides to local frame if they are global?
-        # WAIT. get_position_at returns global values?
-        # get_position_at returns raw values stored in Keyframe.
-        # Recorder saves global slider values.
-        # So yes, they are global. We need to convert to local.
-        
         rot = -s.config.plant_rotation
         
         local_in = None
         if inactive_override:
+            # Overrides are usually Global Az/El
             local_in = (inactive_override[0] - rot, inactive_override[1])
             
         local_act = None
@@ -534,7 +544,6 @@ class ResultsWidget(QWidget):
         
         f['states'] = states
         f['safety'] = safety 
-        # print(f"DEBUG: ResultsWidget REGEN STATES. In={local_in} Act={local_act} Safety={safety}") 
         
     def update_instant_stats(self, idx):
         if not self.current_frames or idx >= len(self.current_frames): return
@@ -546,13 +555,25 @@ class ResultsWidget(QWidget):
         in_ovr = None
         act_ovr = None
         
-        if hasattr(self, 'state') and self.state.stow_profile:
+        # 1. Check Stow Strategy Override
+        mode = self.cmb_mode.currentText()
+        if mode == "Stow Strategy":
+            if pd.notna(f.get('stow_az')) and pd.notna(f.get('stow_el')):
+                act_ovr = (f['stow_az'], f['stow_el'])
+        
+        # 2. Check Recorder Profile (Lower priority? Or handled?)
+        # Original code had logic:
+        # if hasattr(self, 'state') and self.state.stow_profile:
+        #      pos = self.state.stow_profile.get_position_at(f['time'])
+        #      ...
+        # We keep this but "Stow Strategy" mode takes precedence if selected
+        
+        if act_ovr is None and hasattr(self, 'state') and self.state.stow_profile:
              pos = self.state.stow_profile.get_position_at(f['time'])
              if pos:
                  # pos is (inactive_az, inactive_el, active_az, active_el)
                  in_ovr = (pos[0], pos[1])
                  act_ovr = (pos[2], pos[3])
-                 # print(f"DEBUG: ResultsWidget Profile Active. In={in_ovr} Act={act_ovr}")
              
         # Check/Regen States
         if hasattr(self, 'state'):
@@ -624,3 +645,4 @@ class ResultsWidget(QWidget):
         self.slider.setValue(self.replay_idx)
         self.slider.blockSignals(False)
         self.update_instant_stats(self.replay_idx)
+

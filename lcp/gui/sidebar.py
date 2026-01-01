@@ -3,7 +3,7 @@ import os
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QLabel, QLineEdit, QPushButton, 
                              QDoubleSpinBox, QSpinBox, QCheckBox, QDateEdit, 
                              QGroupBox, QComboBox, QFormLayout, QFileDialog, QToolButton, 
-                             QScrollArea, QSizePolicy, QMessageBox, QHBoxLayout)
+                             QScrollArea, QSizePolicy, QMessageBox, QHBoxLayout, QApplication)
 from PyQt6.QtCore import pyqtSignal, QDate, Qt, QPropertyAnimation, QParallelAnimationGroup
 from datetime import date
 
@@ -206,6 +206,9 @@ class Sidebar(QWidget):
             # Parameters match results now
             self.reset_ready()
         except Exception as e:
+            import traceback
+            traceback.print_exc()
+            QMessageBox.critical(self, "Load Error", f"Failed to load simulation:\n{e}")
             print(f"Load Error: {e}")
 
     def on_geo_change(self, category, attr, val):
@@ -376,11 +379,154 @@ class Sidebar(QWidget):
         box.addLayout(form)
         self.layout.addWidget(box)
         
+        # Stow Strategy Generator Section
+        self.init_stow_gen()
+        
         # Run Button outside
         self.btn_run = QPushButton("▶ RUN SIMULATION")
         self.btn_run.setStyleSheet(self.STYLE_READY)
         self.btn_run.clicked.connect(self.run_requested.emit)
         self.layout.addWidget(self.btn_run)
+
+    def init_stow_gen(self):
+        box = CollapsibleBox("Stow Strategy Generator", expanded=False)
+        form = QFormLayout()
+
+        # Inputs
+        self.cmb_stg_source = QComboBox()
+        # Initial populate (will be refreshed via signal later if needed)
+        try:
+            self.cmb_stg_source.addItems(self.pm.list_simulations())
+        except: pass
+        
+        # Refresh button for combo? Or rely on refresh_load_list
+        # Let's connect refresh_load_list to update this too
+        
+        self.sb_stg_min_gap = QSpinBox()
+        self.sb_stg_min_gap.setRange(1, 60); self.sb_stg_min_gap.setValue(5)
+        
+        self.sb_stg_safe_el = QDoubleSpinBox()
+        self.sb_stg_safe_el.setRange(0, 90); self.sb_stg_safe_el.setValue(30.0)
+        
+        self.sb_stg_offset = QDoubleSpinBox()
+        self.sb_stg_offset.setRange(0, 180); self.sb_stg_offset.setValue(45.0)
+        
+        self.sb_stg_speed = QDoubleSpinBox()
+        self.sb_stg_speed.setRange(0.1, 120); self.sb_stg_speed.setValue(20.0)
+        
+        form.addRow("Source Simulation:", self.cmb_stg_source)
+        form.addRow("Min Safe Interval (min):", self.sb_stg_min_gap)
+        form.addRow("Safe Stow El (°):", self.sb_stg_safe_el)
+        form.addRow("Westward Offset (°):", self.sb_stg_offset)
+        form.addRow("Max Motor Speed (°/min):", self.sb_stg_speed)
+        
+        btn_gen = QPushButton("Generate Stow Strategy")
+        btn_gen.clicked.connect(self.run_stow_gen)
+        form.addRow(btn_gen)
+        
+        box.addLayout(form)
+        self.layout.addWidget(box)
+
+    def run_stow_gen(self):
+        from lcp.analysis.stow_strategy import StowStrategyGenerator
+        import shutil
+        import json
+        
+        sim_name = self.cmb_stg_source.currentText()
+        if not sim_name:
+            QMessageBox.warning(self, "Input Error", "Please select a source simulation.")
+            return
+
+        min_gap = self.sb_stg_min_gap.value()
+        safe_el = self.sb_stg_safe_el.value()
+        offset = self.sb_stg_offset.value()
+        speed = self.sb_stg_speed.value()
+        
+        try:
+             # Construct Paths
+             base = self.pm.base_path
+             sim_dir = os.path.join(base, sim_name)
+             ts_path = os.path.join(sim_dir, "timeseries.csv")
+             cfg_path = os.path.join(sim_dir, "config.json")
+             res_path = os.path.join(sim_dir, "results.csv")
+             
+             if not os.path.exists(ts_path):
+                 QMessageBox.critical(self, "Error", f"timeseries.csv not found in {sim_name}")
+                 return
+             
+             # Create New Simulation Name
+             # e.g. SimName_Stow_v1
+             # Check for existing variants?
+             # Simple increment:
+             base_name = f"{sim_name}_Stow"
+             counter = 1
+             while True:
+                 new_sim_name = f"{base_name}_v{counter}"
+                 new_sim_dir = os.path.join(base, new_sim_name)
+                 if not os.path.exists(new_sim_dir):
+                     break
+                 counter += 1
+                 
+             os.makedirs(new_sim_dir)
+             
+             # Copy Config and Results (Summary)
+             if os.path.exists(cfg_path):
+                 shutil.copy2(cfg_path, os.path.join(new_sim_dir, "config.json"))
+             if os.path.exists(res_path):
+                 shutil.copy2(res_path, os.path.join(new_sim_dir, "results.csv"))
+                 
+             # Instantiate Generator
+             gen = StowStrategyGenerator(
+                 min_safe_interval_min=min_gap,
+                 safe_stow_el=safe_el,
+                 westward_offset_deg=offset,
+                 max_motor_speed_deg_per_min=speed
+             )
+             
+             # Process Timeseries -> New Timeseries
+             new_ts_path = os.path.join(new_sim_dir, "timeseries.csv")
+             
+             # Show Wait Cursor
+             QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+             try:
+                 gen.process_csv(ts_path, config_path=cfg_path, output_path=new_ts_path)
+             finally:
+                 QApplication.restoreOverrideCursor()
+             
+             # Refresh List
+             self.refresh_load_list()
+
+             # Auto-Load
+             self.combo_load.setCurrentText(new_sim_name)
+             self.load_sim()
+             
+             # Switch Mode in Results Widget
+             # Hacky access to MainWindow via parent chain or generic window access
+             if self.window() and hasattr(self.window(), 'results'):
+                  res = self.window().results
+                  if res and hasattr(res, 'cmb_mode'):
+                       res.cmb_mode.setCurrentText("Stow Strategy")
+                       
+             QMessageBox.information(self, "Success", f"Stow Strategy Generated!\n\nNew Simulation Created & Loaded: {new_sim_name}")
+             
+        except Exception as e:
+             import traceback
+             traceback.print_exc()
+             QMessageBox.critical(self, "Generation Failed", str(e))
+
+    def refresh_load_list(self):
+        self.combo_load.clear()
+        if hasattr(self, 'cmb_stg_source'):
+            self.cmb_stg_source.clear() # Also update generator source
+            
+        try:
+             sims = self.pm.list_simulations()
+             self.combo_load.addItems(sims)
+             if hasattr(self, 'cmb_stg_source'):
+                 self.cmb_stg_source.addItems(sims)
+        except:
+             pass
+
         
     def init_visual_settings(self):
          box = CollapsibleBox("3D View Settings", expanded=False)
@@ -466,7 +612,7 @@ class Sidebar(QWidget):
         self.sb_width.blockSignals(True); self.sb_width.setValue(g.width); self.sb_width.blockSignals(False)
         self.sb_length.blockSignals(True); self.sb_length.setValue(g.length); self.sb_length.blockSignals(False)
         self.sb_pivot_depth_glass.blockSignals(True); self.sb_pivot_depth_glass.setValue(self.pivot_depth_glass); self.sb_pivot_depth_glass.blockSignals(False)
-        self.sb_thickness.blockSignals(True); self.sb_thickness.setValue(g.thickness); self.sb_thickness.blockSignals(False)
+        self.sb_connected_thickness.blockSignals(True); self.sb_connected_thickness.setValue(g.thickness); self.sb_connected_thickness.blockSignals(False)
         
         # Config
         c = self.state.config
