@@ -7,7 +7,7 @@ class ScenarioConfig:
     """
     grid_pitch_x: float = 1.7
     grid_pitch_y: float = 1.7
-    tolerance: float = 0.03
+    tolerance: float = 0.05
     total_panels: int = 2400 # 60x40 default
     plant_rotation: float = 5.35 # Clockwise from North
     min_elevation: float = 15.0 # Degrees (User requests min 15°)
