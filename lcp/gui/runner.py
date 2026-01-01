@@ -6,6 +6,7 @@ from PyQt6.QtCore import QThread, pyqtSignal
 
 from lcp.simulation import SimulationRunner
 from lcp.gui.state import AppState
+from lcp.physics.sun_provider import SunPositionProvider
 
 class SimulationWorker(QThread):
     """
@@ -77,6 +78,13 @@ class SimulationWorker(QThread):
             self.status.emit("Loading Solar Data...")
             runner.load_data()
             
+            # Setup Sun Provider
+            sun_provider = SunPositionProvider(
+                source_mode=cfg.sun_source,
+                csv_dir="sun positions CSV" # specific to dashboard cwd or relative to execution?
+            )
+            # Desktop App run dir is likely project root.
+            
             timestep_min = self.state.sim_settings.timestep_min
             steps_per_day = int(24 * 60 / timestep_min)
             total_steps = self.days * steps_per_day
@@ -91,6 +99,13 @@ class SimulationWorker(QThread):
                 current_day_date = self.start_date.date() + timedelta(days=d)
                 start_dt_iter = datetime.combine(current_day_date, datetime.min.time())
                 
+                # Pre-calculate Sun Positions for Day
+                day_steps = [start_dt_iter + timedelta(minutes=timestep_min * i) for i in range(steps_per_day)]
+                day_times = pd.DatetimeIndex(day_steps)
+                
+                # Use provider to compute for all steps at once
+                day_azs, day_els = sun_provider.get_sun_positions(day_times, runner.solar) 
+                
                 day_metrics = {
                     "date": current_day_date,
                     "theo_kwh": 0.0, "act_kwh": 0.0,
@@ -102,7 +117,7 @@ class SimulationWorker(QThread):
                 # Iter Frames
                 for i in range(steps_per_day):
                     if not self._is_running: break
-                    dt = start_dt_iter + timedelta(minutes=timestep_min * i)
+                    dt = day_steps[i]
                     global_step += 1
                     
                     # Throttle Signals
@@ -111,22 +126,26 @@ class SimulationWorker(QThread):
                         self.progress.emit(pct)
                         self.status.emit(f"Simulating {current_day_date} {dt.strftime('%H:%M')}")
                     
-                    # Logic
-                    sun = runner.solar.get_position(dt)
+                    # Logic - Use Pre-calculated Values
+                    s_az = day_azs[i]
+                    s_el = day_els[i]
+
+                    # Create dummy Sun object for compatibility if needed, or just use values
+                    # runner.solar.get_position returned object with .azimuth, .elevation
                     
                     # Night Skip
-                    if sun.elevation <= 0:
+                    if s_el <= 0:
                         continue
                         
                     # Clashes Only Mode Filter
                     if self.state.sim_settings.clashes_only_mode:
-                        if sun.elevation < self.state.sim_settings.clash_min_elevation:
+                        if s_el < self.state.sim_settings.clash_min_elevation:
                              continue
                         
-                    local_az = sun.azimuth - cfg.plant_rotation # PLANT ROTATION
+                    local_az = s_az - cfg.plant_rotation # PLANT ROTATION
                     
                     # Solve
-                    states, safety = runner.kernel.solve_timestep(local_az, sun.elevation, enable_safety=True)
+                    states, safety = runner.kernel.solve_timestep(local_az, s_el, enable_safety=True)
                     dni = runner.get_dni(dt)
                     
                     # Calc Power
@@ -275,8 +294,8 @@ class SimulationWorker(QThread):
                     
                     day_frames.append({
                          "time": dt,
-                         "sun_az": sun.azimuth,
-                         "sun_el": sun.elevation,
+                         "sun_az": s_az,
+                         "sun_el": s_el,
                          "dni": dni,
                          "theo_w": step_theo_w,
                          "act_w": step_act_w,

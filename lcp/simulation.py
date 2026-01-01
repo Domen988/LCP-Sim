@@ -1,5 +1,6 @@
 import pandas as pd
 import numpy as np
+import os
 from datetime import datetime, timedelta
 from typing import List, Dict
 from scipy.interpolate import CubicSpline
@@ -8,6 +9,7 @@ from lcp.core.geometry import PanelGeometry
 from lcp.core.config import ScenarioConfig
 from lcp.core.solar import SolarCalculator
 from lcp.physics.engine import InfiniteKernel
+from lcp.physics.sun_provider import SunPositionProvider
 
 class SimulationRunner:
     def __init__(self, weather_path):
@@ -16,6 +18,16 @@ class SimulationRunner:
         self.cfg = ScenarioConfig()
         self.kernel = InfiniteKernel(self.geo, self.cfg)
         self.solar = SolarCalculator()
+        self.sun_provider = None # initialized later or now?
+        # We need CSV dir for provider if mode is csv. 
+        # Usually passed via config? Or hardcoded for now based on prompt.
+        # "sun positions CSV" folder is relative to root?
+        self.csv_sun_dir = os.path.join(os.path.dirname(weather_path), "sun positions CSV")
+        # Adjust if weather_path is not in root or similar structure.
+        # Actually weather_path is likely passed from Dashboard which is in root.
+        # Let's assume standard relative path "sun positions CSV" from CWD or relative to script.
+        self.csv_sun_dir = "sun positions CSV" 
+        
         self.splines = {} # Cache for CubicSplines
         
     def load_data(self) -> pd.DataFrame:
@@ -117,14 +129,14 @@ class SimulationRunner:
         """
         Runs the simulation for a full year (or subset).
         """
-        # ... (Existing logic, but relying on get_dni which now uses internal splines)
-        # Note: run_year isn't used by the dashboard directly (dashboard has its own loop).
-        pass  # Dashboard implements its own loop loop currently.
-
-        """
-        Runs the simulation for a full year (or subset).
-        """
         data = self.load_data()
+        
+        # Init Sun Provider based on Config
+        # Assuming cfg was populated (Dashboard likely populates it before calling run)
+        self.sun_provider = SunPositionProvider(
+            source_mode=self.cfg.sun_source, 
+            csv_dir=self.csv_sun_dir
+        )
         
         # Generate timestamps
         start = datetime(2025, 1, 1)
@@ -136,31 +148,30 @@ class SimulationRunner:
         
         print(f"Starting Simulation for {len(steps)} steps...")
         
-        # We can optimize by not running night steps?
-        # But we need the full series for the UI slider.
+        # Batch Calculate Sun Positions
+        print(f"Calculating Sun Positions ({self.cfg.sun_source})...")
+        sun_azs, sun_els = self.sun_provider.get_sun_positions(steps, self.solar)
         
         # Bias from Spec: Plant Rotated +5 deg Clockwise.
-        # Sun Az relative to Plant = Sun Az (Global) - 5 deg.
-        # If Plant N is rotated +5 deg (to N' = 5 deg).
-        # A sun at 5 deg (True N) should match Plant N (0 deg local).
-        # So Local Az = True Az - 5. Correct.
-        # LOCAL AZIMUTH: Sun Az (Global) - Plant Rotation
-        # plant_rotation=5 means plant North is 5 deg East of True North.
-        # To align, we subtract 5 deg from Sun Az.
         PLANT_ROTATION = -self.cfg.plant_rotation 
         
-        for dt in steps:
-            # 1. Physics
-            sun = self.solar.get_position(dt)
-            local_az = sun.azimuth - PLANT_ROTATION
+        local_azs = sun_azs - PLANT_ROTATION
+        
+        # Pre-calculate DNI? No, DNI depends on spline which is fast.
+        
+        # Main Loop
+        for i, dt in enumerate(steps):
+            s_az = sun_azs[i]
+            s_el = sun_els[i]
+            l_az = local_azs[i]
             
             # NIGHT OPTIMIZATION
-            if sun.elevation <= 0:
+            if s_el <= 0:
                  results.append({
                     "Timestamp": dt,
-                    "Sun_Az": sun.azimuth,
-                    "Sun_El": sun.elevation,
-                    "Local_Az": local_az,
+                    "Sun_Az": s_az,
+                    "Sun_El": s_el,
+                    "Local_Az": l_az,
                     "DNI": 0.0,
                     "Safety_Mode": True, # Safe
                     "Theo_Power": 0.0,
@@ -170,24 +181,12 @@ class SimulationRunner:
                 })
                  continue
 
-            states, safety_triggered = self.kernel.solve_timestep(local_az, sun.elevation)
+            states, safety_triggered = self.kernel.solve_timestep(l_az, s_el)
             
             # 2. Power Check
             dni = self.get_dni(dt, data)
             
             # Aggregate stats from Kernel (3x3 = 9 panels)
-            # We want "Total Power" scaling strategy.
-            # Spec: "Extrapolation: Results from 3x3 Kernel used to calculate total."
-            # Let's just output the Kernel Sum for now, UI can scale.
-            
-            # Theoretical Power (All tracking perfectly)
-            # Area * DNI * Cos(Theta_Ideal)
-            # Ideal Theta is just Sun Normal vs Panel (assuming perfect track).
-            # Perfect track -> Normal // Sun -> Cos=1.
-            # So Theoretical = Area * DNI.
-            
-            # Scale to Whole Plant
-            # Extrapolate from 9-panel kernel
             n_kernel = 9.0
             total_panels = self.cfg.total_panels
             panel_area = self.geo.width * self.geo.length
@@ -206,9 +205,6 @@ class SimulationRunner:
 
             p_theo_plant = (panel_area * total_panels) * dni
             
-            # Theoretical Kernel Power (if all 9 panels were perfect 1.0)
-            # But we want to scale checking the "average per panel" in kernel.
-            
             p_act_plant = (k_act_sum / n_kernel) * p_theo_plant
             p_stow_plant = (k_stow_sum / n_kernel) * p_theo_plant
             p_shad_plant = (k_shad_sum / n_kernel) * p_theo_plant
@@ -216,9 +212,9 @@ class SimulationRunner:
             # Store Row
             res = {
                 "Timestamp": dt,
-                "Sun_Az": sun.azimuth,
-                "Sun_El": sun.elevation,
-                "Local_Az": local_az,
+                "Sun_Az": s_az,
+                "Sun_El": s_el,
+                "Local_Az": l_az,
                 "DNI": dni,
                 "Safety_Mode": safety_triggered,
                 "Theo_Power": p_theo_plant,

@@ -1,6 +1,7 @@
 import pandas as pd
 import numpy as np
 import json
+import os
 from dataclasses import dataclass
 from typing import List, Tuple, Optional
 
@@ -20,6 +21,122 @@ class StowStrategyGenerator:
     Generates safe stow profiles for clash events in simulation data.
     """
     
+    def export_strategy_csv(self, strategy_path: str, output_path: str, sun_csv_dir: str):
+        """
+        Exports strategy merged with source Sun CSVs to requested format.
+        Columns: Original columns + 'Stow Elevation DEG', 'Stow Azimuth DEG', 'Stow mode'
+        """
+        print(f"Exporting Strategy to {output_path}...")
+        
+        # 1. Load Strategy
+        # Strategy has: time, stow_az, stow_el, mode, safety, sun_az, sun_el
+        df_strat = pd.read_csv(strategy_path)
+        # Standardize column name just in case
+        if 'Timestamp' in df_strat.columns:
+             df_strat.rename(columns={'Timestamp': 'time'}, inplace=True)
+             
+        df_strat['time'] = pd.to_datetime(df_strat['time'])
+        df_strat.sort_values('time', inplace=True)
+        
+        # 2. Iterate Strategy Time Range (Year/Month)
+        # We process month by month to load relevant source files
+        # 2. Iterate Strategy Time Range (Year/Month)
+        # We process month by month to load relevant source files
+        start_date = df_strat['time'].min()
+        end_date = df_strat['time'].max()
+        
+        # Generate list of (Year, Month) covering the range
+        dates = pd.date_range(start_date, end_date, freq='MS')
+        if len(dates) == 0:
+            # Single month or less
+             dates = pd.DatetimeIndex([start_date])
+             
+        full_dfs = []
+        
+        processed_months = set()
+        
+        for d in dates:
+            yr = d.year
+            mo = d.month
+            if (yr, mo) in processed_months: continue
+            processed_months.add((yr, mo))
+            
+            # Load Source CSV
+            src_name = f"{yr}_{mo:02d}.csv"
+            src_path = os.path.join(sun_csv_dir, src_name)
+            
+            if not os.path.exists(src_path):
+                print(f"Warning: Source CSV {src_name} missing for export. Skipping period.")
+                continue
+                
+            # Load Source
+            # Header format: JULIAN DAY UTC,YEAR,Month ,Day,Hours Decimal,Time Sexa Minutes,Time UTC,Azimuth DEG,Elevation DEG,Earth Declination DEG,Equation of Time MINUTES
+            df_src = pd.read_csv(src_path)
+            # Clean cols
+            col_map = {c: c.strip() for c in df_src.columns}
+            df_src.rename(columns=col_map, inplace=True)
+            
+            # Construct DateTime index for Source to allow alignment
+            # (Similar to SunProvider loading)
+            df_src['__dt__'] = pd.to_datetime(
+                df_src[['YEAR', 'Month', 'Day']].astype(str).agg('-'.join, axis=1) + ' ' + df_src['Time UTC']
+            )
+            
+            # Filter Strategy to this month
+            mask = (df_strat['time'].dt.year == yr) & (df_strat['time'].dt.month == mo)
+            df_strat_mo = df_strat[mask].copy()
+            
+            if df_strat_mo.empty:
+                continue
+            
+            # Merge
+            # Left join on Source
+            merged = pd.merge(
+                df_src, 
+                df_strat_mo[['time', 'stow_az', 'stow_el', 'mode']], 
+                left_on='__dt__', 
+                right_on='time', 
+                how='left'
+            )
+            
+            # Set Index for interpolation
+            merged.set_index('__dt__', inplace=True)
+            
+            # Interpolate Numeric
+            merged['Stow Elevation DEG'] = merged['stow_el'].interpolate(method='time', limit_direction='both')
+            merged['Stow Azimuth DEG'] = merged['stow_az'].interpolate(method='time', limit_direction='both')
+            
+            # Fill Categorical (Mode) - Forward fill
+            merged['Stow mode'] = merged['mode'].ffill().bfill() 
+            
+            # Drop join columns
+            merged.drop(columns=['time', 'stow_az', 'stow_el', 'mode'], inplace=True)
+            
+            # Append to list
+            full_dfs.append(merged)
+            
+        if not full_dfs:
+            print("No matching source data found to export.")
+            return
+
+        # Concat
+        final_df = pd.concat(full_dfs)
+        
+        # Select/Order Columns match Source + New
+        # Source Cols (minus __dt__)
+        base_cols = [c for c in df_src.columns if c != '__dt__']
+        new_cols = ['Stow Elevation DEG', 'Stow Azimuth DEG', 'Stow mode']
+        
+        final_cols = base_cols + new_cols
+        
+        # Filter (df_src was modified in loop? No, fresh load)
+        # But `merged` has all cols.
+        final_df = final_df[final_cols]
+        
+        # Save
+        final_df.to_csv(output_path, index=False)
+        print(f"Export Complete: {output_path}")
+        
     def __init__(self, 
                  min_safe_interval_min: int = 5, 
                  safe_stow_el: float = 30.0, 

@@ -25,6 +25,7 @@ from lcp.app.visualizer import PlantVisualizer
 from lcp.app.theme import Theme
 from lcp.core.persistence import PersistenceManager
 from lcp.analysis.stow_strategy import StowStrategyGenerator
+from lcp.physics.sun_provider import SunPositionProvider
 
 PLANT_ROTATION = 5.0
 
@@ -151,6 +152,8 @@ with st.sidebar.expander("Simulation Settings", expanded=False):
         st.number_input("Duration (Days)", value=365, disabled=True, key="sim_days_disp")
     else:
         sim_days = st.number_input("Duration (Days)", 1, 3650, 3) 
+        
+    sun_source = st.radio("Sun Data Source", ["pvlib", "csv"], index=0, horizontal=True, help="Use 'csv' to load from 'sun positions CSV' folder.") 
 
 # Stow Strategy Generator
 with st.sidebar.expander("Stow Strategy Generator", expanded=True):
@@ -245,7 +248,8 @@ if st.session_state.get("run_trigger", False):
             grid_pitch_x=pitch_x,
             grid_pitch_y=pitch_y, 
             tolerance=tolerance,
-            total_panels=total_panels
+            total_panels=total_panels,
+            sun_source=sun_source
         )
         
         # --- SIMULATION STATE ---
@@ -369,6 +373,19 @@ if st.session_state.get("run_trigger", False):
             # Generate intervals
             steps = [start_dt + timedelta(minutes=timestep_min*i) for i in range(steps_per_day)]
             
+            # Initialise Sun Provider for this run configuration
+            # Ensure CSV dir is correct (relative to CWD for dashboard)
+            runner.cfg = cfg
+            runner.sun_provider = SunPositionProvider(
+                source_mode=cfg.sun_source, 
+                csv_dir="sun positions CSV" # specific to dashboard cwd
+            )
+            
+            # Pre-calculate sun positions for the whole day to support CSV mode batching
+            # (Though CSV provider supports batching, we are looping by day here).
+            # We can just batch the whole day's steps.
+            day_sun_azs, day_sun_els = runner.sun_provider.get_sun_positions(pd.DatetimeIndex(steps), runner.solar)
+
             day_frames = []
             day_stats = {
                 "date": current_day_date,
@@ -383,16 +400,17 @@ if st.session_state.get("run_trigger", False):
                     progress_bar.progress(min(1.0, global_step / total_steps))
                     status_text.text(f"Simulating {current_day_date} | {dt.strftime('%H:%M')}")
                 
-                # A. Physics
-                sun = runner.solar.get_position(dt)
+                # A. Physics - Use Pre-calculated Sun
+                s_az = day_sun_azs[i]
+                s_el = day_sun_els[i]
                 
                 # NIGHT OPTIMIZATION: Skip simulation if sun is below horizon
-                if sun.elevation <= 0:
+                if s_el <= 0:
                     # Add zero-power frame
                     day_frames.append({
                         "time": dt,
-                        "sun_az": sun.azimuth,
-                        "sun_el": sun.elevation,
+                        "sun_az": s_az,
+                        "sun_el": s_el,
                         "safety": True, # Safe by default
                         "act_w": 0.0,
                         "theo_w": 0.0,
@@ -400,15 +418,15 @@ if st.session_state.get("run_trigger", False):
                     })
                     continue
 
-                local_az = sun.azimuth - PLANT_ROTATION
+                local_az = s_az - PLANT_ROTATION
                 
                 # B. Solve State
-                states, safety = runner.kernel.solve_timestep(local_az, sun.elevation, enable_safety=True)
+                states, safety = runner.kernel.solve_timestep(local_az, s_el, enable_safety=True)
                 dni = runner.get_dni(dt, data_matrix)
                 
                 # DEBUG: Check Noon values
                 if dt.hour == 12 and dt.minute == 0:
-                     print(f"DEBUG: {dt} | El: {sun.elevation:.2f} | DNI: {dni:.2f} | Splines: {len(runner.splines)}")
+                     print(f"DEBUG: {dt} | El: {s_el:.2f} | DNI: {dni:.2f} | Splines: {len(runner.splines)}")
 
                 
                 # C. Calculate Power (Weighted Whole Plant)

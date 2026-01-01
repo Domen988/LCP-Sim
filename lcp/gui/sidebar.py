@@ -139,6 +139,14 @@ class Sidebar(QWidget):
         form.addRow(self.combo_load)
         form.addRow(btn_layout)
         
+        form.addRow(btn_layout)
+        
+        # Export Stow Button (Moved here per user request)
+        self.btn_export_stow = QPushButton("Save stow strategy to csv")
+        self.btn_export_stow.clicked.connect(self.export_stow_strategy)
+        self.btn_export_stow.setEnabled(False) # Default disabled until load
+        form.addRow(self.btn_export_stow)
+        
         box.addLayout(form)
         self.layout.addWidget(box)
         
@@ -203,8 +211,14 @@ class Sidebar(QWidget):
             self.update_widgets_from_state()
             self.geometry_changed.emit()
             self.load_requested.emit(res)
+            self.geometry_changed.emit()
+            self.load_requested.emit(res)
             # Parameters match results now
             self.reset_ready()
+            
+            # Enable Export if button exists
+            if hasattr(self, 'btn_export_stow'):
+                self.btn_export_stow.setEnabled(True)
         except Exception as e:
             import traceback
             traceback.print_exc()
@@ -355,8 +369,16 @@ class Sidebar(QWidget):
         self.sb_step.setValue(s.timestep_min)
         self.sb_step.valueChanged.connect(self.on_sim_change)
         self.sb_step.setValue(s.timestep_min)
+        self.sb_step.setValue(s.timestep_min)
         self.sb_step.valueChanged.connect(self.on_sim_change)
         form.addRow("Timestep (min)", self.sb_step)
+        
+        # Sun Source
+        self.cmb_sun_source = QComboBox()
+        self.cmb_sun_source.addItems(["pvlib", "csv"])
+        self.cmb_sun_source.setCurrentText(self.state.config.sun_source)
+        self.cmb_sun_source.currentTextChanged.connect(self.on_sim_change)
+        form.addRow("Sun Data Source", self.cmb_sun_source)
         
         # Clashes Only Settings
         self.cb_clashes = QCheckBox("Run Clashes Only (Dec 21)")
@@ -528,6 +550,54 @@ class Sidebar(QWidget):
              pass
 
         
+    def export_stow_strategy(self):
+        from lcp.analysis.stow_strategy import StowStrategyGenerator
+        
+        sim_name = self.combo_load.currentText()
+        if not sim_name:
+             QMessageBox.warning(self, "Export Error", "No simulation loaded to export.")
+             return
+             
+        base = self.pm.base_path
+        sim_dir = os.path.join(base, sim_name)
+        ts_path = os.path.join(sim_dir, "timeseries.csv")
+        
+        if not os.path.exists(ts_path):
+             QMessageBox.critical(self, "Export Error", "timeseries.csv not found.")
+             return
+             
+        # Export Name
+        export_name = f"{sim_name}_Export.csv"
+        # base is already `saved_simulations` (or user configured folder)
+        export_path = os.path.join(base, export_name) 
+        
+        # Sun CSV Dir
+        # Assuming fixed path relative to App Root?
+        # Need to find project root or use configured path.
+        # I'll look for "sun positions CSV" in CWD or up one level.
+        sun_dir = "sun positions CSV"
+        if not os.path.exists(sun_dir):
+             # Try absolute?
+             # For now assume running from root.
+             pass
+             
+        try:
+             # We use the Generator class just for its static-like export method
+             gen = StowStrategyGenerator()
+             
+             QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+             try:
+                 gen.export_strategy_csv(ts_path, export_path, sun_dir)
+             finally:
+                 QApplication.restoreOverrideCursor()
+                 
+             QMessageBox.information(self, "Export Success", f"Strategy exported to:\n{export_name}")
+             
+        except Exception as e:
+             import traceback
+             traceback.print_exc()
+             QMessageBox.critical(self, "Export Failed", str(e))
+
     def init_visual_settings(self):
          box = CollapsibleBox("3D View Settings", expanded=False)
          form = QFormLayout()
@@ -562,7 +632,11 @@ class Sidebar(QWidget):
         s.clashes_only_mode = self.cb_clashes.isChecked()
         s.target_solstice = "Summer (Dec)" # Hardcoded
         s.clash_window = self.sb_window.value()
+        s.clash_window = self.sb_window.value()
         s.clash_min_elevation = self.sb_min_el.value()
+        
+        # Update Sun Source in Config
+        self.state.config.sun_source = self.cmb_sun_source.currentText()
         
         is_clash_mode = s.clashes_only_mode
         self.sb_window.setEnabled(is_clash_mode)
@@ -636,6 +710,7 @@ class Sidebar(QWidget):
         self.sb_days.blockSignals(True); self.sb_days.setValue(s.duration_days); self.sb_days.blockSignals(False)
         self.sb_step.blockSignals(True); self.sb_step.setValue(s.timestep_min); self.sb_step.blockSignals(False)
         self.sb_step.blockSignals(True); self.sb_step.setValue(s.timestep_min); self.sb_step.blockSignals(False)
+        self.cmb_sun_source.blockSignals(True); self.cmb_sun_source.setCurrentText(self.state.config.sun_source); self.cmb_sun_source.blockSignals(False)
         
         self.cb_clashes.blockSignals(True); self.cb_clashes.setChecked(s.clashes_only_mode); self.cb_clashes.blockSignals(False)
         self.sb_window.blockSignals(True); self.sb_window.setValue(s.clash_window); self.sb_window.blockSignals(False)

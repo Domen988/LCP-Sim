@@ -15,3 +15,6 @@ class ScenarioConfig:
     # 4x4 Field Configuration
     field_spacing_x: float = 2.3 # Pivot-to-Pivot between fields (X)
     field_spacing_y: float = 2.4 # Pivot-to-Pivot between fields (Y)
+    
+    # Sun Source
+    sun_source: str = "pvlib" # 'pvlib' or 'csv'
