@@ -208,36 +208,50 @@ class Sidebar(QWidget):
         except Exception as e:
             print(f"Load Error: {e}")
 
+    def on_geo_change(self, category, attr, val):
+        if category == 'self':
+             setattr(self, attr, val)
+        elif category == 'geo':
+             setattr(self.state.geometry, attr, val)
+        elif category == 'conf':
+             setattr(self.state.config, attr, val)
+             
+        self.geometry_changed.emit()
+        self.set_stale()
+
     def init_geometry(self):
         box = CollapsibleBox("Geometry Config", expanded=False)
         form = QFormLayout()
         
-        def add_float(label, attr, min_v, max_v, step, obj):
+        def add_float(label, attr, min_v, max_v, step, category):
             sb = QDoubleSpinBox()
             sb.setRange(min_v, max_v)
             sb.setSingleStep(step)
+            
+            # Resolve initial value (Just for init)
+            if category == 'geo': obj = self.state.geometry
+            elif category == 'conf': obj = self.state.config
+            else: obj = self
+            
             sb.setValue(getattr(obj, attr))
-            sb.valueChanged.connect(lambda v: self.on_geo_change(obj, attr, v))
+            sb.valueChanged.connect(lambda v: self.on_geo_change(category, attr, v))
             form.addRow(label, sb)
             self.__setattr__(f"sb_{attr}", sb) 
             
-        g = self.state.geometry
-        c = self.state.config
-        
-        add_float("Width (m)", "width", 0.5, 5.0, 0.1, g)
-        add_float("Length (m)", "length", 0.5, 5.0, 0.1, g)
-        add_float("Pivot Depth (m)", "pivot_depth_glass", 0.0, 0.5, 0.01, self)
-        add_float("Thickness (m)", "thickness", 0.01, 0.5, 0.01, g)
-        add_float("Pitch X (m)", "grid_pitch_x", 0.5, 10.0, 0.1, c)
-        add_float("Pitch Y (m)", "grid_pitch_y", 0.5, 10.0, 0.1, c)
-        add_float("Field Spacing X (m)", "field_spacing_x", 0.5, 10.0, 0.1, c)
-        add_float("Field Spacing Y (m)", "field_spacing_y", 0.5, 10.0, 0.1, c)
-        add_float("Clash Tolerance (m)", "tolerance", 0.0, 0.5, 0.01, c)
-        add_float("Min Elevation (°)", "min_elevation", 0.0, 90.0, 1.0, c)
+        add_float("Width (m)", "width", 0.5, 5.0, 0.1, 'geo')
+        add_float("Length (m)", "length", 0.5, 5.0, 0.1, 'geo')
+        add_float("Pivot Depth (m)", "pivot_depth_glass", 0.0, 0.5, 0.01, 'self')
+        add_float("Thickness (m)", "connected_thickness", 0.01, 0.5, 0.01, 'self')
+        add_float("Pitch X (m)", "grid_pitch_x", 0.5, 10.0, 0.1, 'conf')
+        add_float("Pitch Y (m)", "grid_pitch_y", 0.5, 10.0, 0.1, 'conf')
+        add_float("Field Spacing X (m)", "field_spacing_x", 0.5, 10.0, 0.1, 'conf')
+        add_float("Field Spacing Y (m)", "field_spacing_y", 0.5, 10.0, 0.1, 'conf')
+        add_float("Clash Tolerance (m)", "tolerance", 0.0, 0.5, 0.01, 'conf')
+        add_float("Min Elevation (°)", "min_elevation", 0.0, 90.0, 1.0, 'conf')
         
         box.addLayout(form)
         self.layout.addWidget(box)
-        
+
     @property
     def pivot_depth_glass(self):
         return self.state.geometry.pivot_offset[2] + (self.state.geometry.thickness / 2)
@@ -246,14 +260,22 @@ class Sidebar(QWidget):
     def pivot_depth_glass(self, val):
         t = self.state.geometry.thickness
         self.state.geometry.pivot_offset = (0, 0, val - t/2)
-
-    def on_geo_change(self, obj, attr, val):
-        if obj == self: 
-             setattr(self, attr, val)
-        else:
-             setattr(obj, attr, val)
-        self.geometry_changed.emit()
-        self.set_stale()
+        
+    @property
+    def connected_thickness(self):
+        return self.state.geometry.thickness
+        
+    @connected_thickness.setter
+    def connected_thickness(self, new_thickness):
+        # Invariant: Pivot Depth (Glass to Pivot)
+        current_depth = self.pivot_depth_glass
+        
+        # Update Thickness
+        self.state.geometry.thickness = new_thickness
+        
+        # Restore Depth by moving Offset
+        # Depth = Offset + T/2  =>  Offset = Depth - T/2
+        self.state.geometry.pivot_offset = (0, 0, current_depth - new_thickness/2)
 
     def init_sizing(self):
         box = CollapsibleBox("Plant Config", expanded=False)
