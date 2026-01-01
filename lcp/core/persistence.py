@@ -50,10 +50,43 @@ class PersistenceManager:
             os.makedirs(sim_dir)
             
         # 1. Save Configuration
+        geo_dict = dataclasses.asdict(geo)
+        
+        cfg_dict = dataclasses.asdict(cfg)
+
+        # A. Inject Pivot Depth (User Input)
+        # pivot_depth = offset_z + thickness/2
+        offset_z = geo_dict.get('pivot_offset', [0,0,0])[2]
+        thickness = geo_dict.get('thickness', 0.15)
+        geo_dict['pivot_depth'] = offset_z + (thickness / 2.0)
+        
+        # B. Inject Simulation Runtime Params (Timestep, Duration)
+        # Duration
+        cfg_dict['duration_days'] = len(results)
+        
+        # Timestep (Infer from first valid pair of frames)
+        timestep_min = 0
+        try:
+            for day_res in results:
+                frames = day_res.get('frames', [])
+                if len(frames) >= 2:
+                    t1 = frames[0]['time']
+                    t2 = frames[1]['time']
+                    if hasattr(t1, 'to_pydatetime'): t1 = t1.to_pydatetime()
+                    if hasattr(t2, 'to_pydatetime'): t2 = t2.to_pydatetime()
+                    
+                    diff = t2 - t1
+                    timestep_min = int(diff.total_seconds() / 60)
+                    break 
+        except Exception:
+            pass
+        
+        cfg_dict['timestep_min'] = timestep_min
+
         data = {
-            "geometry": dataclasses.asdict(geo),
-            "config": dataclasses.asdict(cfg),
-            "version": "1.0",
+            "geometry": geo_dict,
+            "config": cfg_dict,
+            "version": "1.1",
             "timestamp": datetime.now().isoformat()
         }
         
@@ -109,10 +142,18 @@ class PersistenceManager:
         geo_data = data.get("geometry", {})
         if "pivot_offset" in geo_data and isinstance(geo_data["pivot_offset"], list):
             geo_data["pivot_offset"] = tuple(geo_data["pivot_offset"])   
+            
+        # Strip extra fields not in dataclass (Backward compat for new files loading into old classes)
+        geo_data.pop('pivot_depth', None)
+        
         geo = PanelGeometry(**geo_data)
         
         # Config
         cfg_data = data.get("config", {})
+        # Strip derived inputs
+        cfg_data.pop('timestep_min', None)
+        cfg_data.pop('duration_days', None)
+        
         cfg = ScenarioConfig(**cfg_data)
         
         # 2. Load Results Summary

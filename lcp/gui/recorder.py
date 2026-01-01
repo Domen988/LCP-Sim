@@ -857,8 +857,11 @@ class StowRecorder(QWidget):
         # Prepare Geo Dict (Fix PivotZ in metadata if desired, or just raw)
         geo_dict = self.state.geometry.__dict__.copy() if hasattr(self.state.geometry, '__dict__') else {}
         
-        piv_z = geo_dict.get('pivot_offset', [0,0,0])[2] + (geo_dict.get('thickness', 0)/2.0)
-        geo_dict['display_pivot_z_height'] = piv_z
+        # Calculate Pivot Depth (Pivot to Glass)
+        # pivot_offset[2] is pivot-to-center. Depth = OffsetZ + Thickness/2
+        piv_z = geo_dict.get('pivot_offset', [0,0,0])[2]
+        thick = geo_dict.get('thickness', 0.15)
+        geo_dict['pivot_depth'] = piv_z + (thick / 2.0)
         
         data = {
             "metadata": {
