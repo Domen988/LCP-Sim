@@ -137,18 +137,18 @@ class MainWindow(QMainWindow):
         
         if s.full_year:
              days = 365
-        elif s.around_solstice:
+        elif s.clashes_only_mode:
              # Calculate Solstice based on Start Year
              # User requested Dec 21 ONLY
              year = start.year
              solstice = datetime.date(year, 12, 21)
                   
              # Start = Solstice - Window
-             window = s.solstice_window
+             window = s.clash_window
              start = solstice - datetime.timedelta(days=window)
              days = window * 2 # Total window
              
-             print(f"Solstice Mode: Dec 21 ({solstice}) -> Start: {start}, Days: {days}")
+             print(f"Clashes Only Mode: Dec 21 ({solstice}) -> Start: {start}, Days: {days}")
         
         # Worker
         dt_start = datetime.datetime.combine(start, datetime.time.min)

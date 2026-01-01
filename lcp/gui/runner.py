@@ -118,6 +118,11 @@ class SimulationWorker(QThread):
                     if sun.elevation <= 0:
                         continue
                         
+                    # Clashes Only Mode Filter
+                    if self.state.sim_settings.clashes_only_mode:
+                        if sun.elevation < self.state.sim_settings.clash_min_elevation:
+                             continue
+                        
                     local_az = sun.azimuth - cfg.plant_rotation # PLANT ROTATION
                     
                     # Solve

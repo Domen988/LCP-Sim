@@ -355,17 +355,23 @@ class Sidebar(QWidget):
         self.sb_step.valueChanged.connect(self.on_sim_change)
         form.addRow("Timestep (min)", self.sb_step)
         
-        # Solstice Settings
-        self.cb_solstice = QCheckBox("Run Around Solstice (Dec 21)")
-        self.cb_solstice.setChecked(s.around_solstice)
-        self.cb_solstice.toggled.connect(self.on_sim_change)
-        form.addRow(self.cb_solstice)
+        # Clashes Only Settings
+        self.cb_clashes = QCheckBox("Run Clashes Only (Dec 21)")
+        self.cb_clashes.setChecked(s.clashes_only_mode)
+        self.cb_clashes.toggled.connect(self.on_sim_change)
+        form.addRow(self.cb_clashes)
         
         self.sb_window = QSpinBox()
         self.sb_window.setRange(1, 100)
-        self.sb_window.setValue(s.solstice_window)
+        self.sb_window.setValue(s.clash_window)
         self.sb_window.valueChanged.connect(self.on_sim_change)
         form.addRow("Days +/- Solstice", self.sb_window)
+        
+        self.sb_min_el = QDoubleSpinBox()
+        self.sb_min_el.setRange(0, 90)
+        self.sb_min_el.setValue(s.clash_min_elevation)
+        self.sb_min_el.valueChanged.connect(self.on_sim_change)
+        form.addRow("Min Elevation (°)", self.sb_min_el)
         
         box.addLayout(form)
         self.layout.addWidget(box)
@@ -407,30 +413,27 @@ class Sidebar(QWidget):
         s.full_year = self.cb_full.isChecked()
         s.duration_days = self.sb_days.value()
         s.timestep_min = self.sb_step.value()
-        s.around_solstice = self.cb_solstice.isChecked()
+        s.clashes_only_mode = self.cb_clashes.isChecked()
         s.target_solstice = "Summer (Dec)" # Hardcoded
-        s.solstice_window = self.sb_window.value()
+        s.clash_window = self.sb_window.value()
+        s.clash_min_elevation = self.sb_min_el.value()
         
-        # Logic:
-        # If Full Year -> Hide Days, Solstice ignored?
-        # If Solstice -> Hide Days, Hide Start Date? Or use Start Date Year?
+        is_clash_mode = s.clashes_only_mode
+        self.sb_window.setEnabled(is_clash_mode)
+        self.sb_min_el.setEnabled(is_clash_mode)
         
-        is_sol = s.around_solstice
-        self.sb_window.setEnabled(is_sol)
-        
-        self.de_start.setEnabled(not is_sol and not s.full_year)
-        self.sb_days.setEnabled(not s.full_year and not is_sol)
-        self.cb_full.setEnabled(not is_sol) # Mutually exclusive?
-        # If Solstice Checked -> Uncheck Full Year visually? 
-        # Actually better to handle mutual exclusivity cleanly.
-        if is_sol and s.full_year:
-             self.cb_full.setChecked(False) # Will trigger recurse?
+        self.de_start.setEnabled(not is_clash_mode and not s.full_year)
+        self.sb_days.setEnabled(not s.full_year and not is_clash_mode)
+        self.cb_full.setEnabled(not is_clash_mode) 
+
+        if is_clash_mode and s.full_year:
+             self.cb_full.setChecked(False) 
              s.full_year = False
         
         if self.cb_full.isChecked():
-             self.cb_solstice.setEnabled(False)
+             self.cb_clashes.setEnabled(False)
         else:
-             self.cb_solstice.setEnabled(True)
+             self.cb_clashes.setEnabled(True)
         self.set_stale()
         
     def set_stale(self):
@@ -486,11 +489,15 @@ class Sidebar(QWidget):
         self.cb_full.blockSignals(True); self.cb_full.setChecked(s.full_year); self.cb_full.blockSignals(False)
         self.sb_days.blockSignals(True); self.sb_days.setValue(s.duration_days); self.sb_days.blockSignals(False)
         self.sb_step.blockSignals(True); self.sb_step.setValue(s.timestep_min); self.sb_step.blockSignals(False)
-        self.cb_solstice.blockSignals(True); self.cb_solstice.setChecked(s.around_solstice); self.cb_solstice.blockSignals(False)
-        self.sb_window.blockSignals(True); self.sb_window.setValue(s.solstice_window); self.sb_window.blockSignals(False)
+        self.sb_step.blockSignals(True); self.sb_step.setValue(s.timestep_min); self.sb_step.blockSignals(False)
         
-        is_sol = s.around_solstice
-        self.sb_window.setEnabled(is_sol)
-        self.sb_days.setEnabled(not s.full_year and not is_sol)
+        self.cb_clashes.blockSignals(True); self.cb_clashes.setChecked(s.clashes_only_mode); self.cb_clashes.blockSignals(False)
+        self.sb_window.blockSignals(True); self.sb_window.setValue(s.clash_window); self.sb_window.blockSignals(False)
+        self.sb_min_el.blockSignals(True); self.sb_min_el.setValue(s.clash_min_elevation); self.sb_min_el.blockSignals(False)
+        
+        is_clash = s.clashes_only_mode
+        self.sb_window.setEnabled(is_clash)
+        self.sb_min_el.setEnabled(is_clash)
+        self.sb_days.setEnabled(not s.full_year and not is_clash)
         
         self.blockSignals(False)

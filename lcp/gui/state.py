@@ -11,10 +11,11 @@ class SimulationSettings:
     full_year: bool = False
     duration_days: int = 3
     timestep_min: int = 6
-    # Solstice Mode
-    around_solstice: bool = False
-    solstice_window: int = 30 # Days +/-
-    target_solstice: str = "Winter (June)" # "Winter (June)", "Summer (Dec)"
+    # Clashes Only Mode
+    clashes_only_mode: bool = False
+    clash_window: int = 50 # Days +/-
+    clash_min_elevation: float = 70.0 # Degrees
+    target_solstice: str = "Summer (Dec)" # Still used to center the window
 
 @dataclass
 class AppState:
