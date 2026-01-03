@@ -9,6 +9,8 @@ from datetime import date
 
 from lcp.gui.state import AppState
 from lcp.core.persistence import PersistenceManager
+from lcp.gui.load_dialog import SimulationLoadDialog
+from PyQt6.QtWidgets import QStyle
 
 class CollapsibleBox(QWidget):
     def __init__(self, title="", parent=None, expanded=False):
@@ -104,11 +106,14 @@ class Sidebar(QWidget):
         form = QFormLayout()
         
         # Path
-        path_layout = QVBoxLayout()
+        path_layout = QHBoxLayout() # Changed to HBox for inline
         self.path_edit = QLineEdit(self.state.storage_path)
         self.path_edit.editingFinished.connect(self.update_path_manual)
         
-        btn_browse = QPushButton("Browse...")
+        btn_browse = QPushButton()
+        btn_browse.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_DirIcon))
+        btn_browse.setToolTip("Browse Folder")
+        btn_browse.setFixedWidth(30)
         btn_browse.clicked.connect(self.browse_path)
         
         path_layout.addWidget(self.path_edit)
@@ -122,21 +127,23 @@ class Sidebar(QWidget):
         form.addRow(self.save_name, btn_save)
         
         # Load / Delete
-        self.combo_load = QComboBox()
-        self.refresh_load_list()
+        # Replaced Combo with Modal logic
+        self.lbl_current_sim = QLabel("No Simulation Loaded")
+        self.lbl_current_sim.setStyleSheet("font-weight: bold; color: #444;")
+        form.addRow("Loaded:", self.lbl_current_sim)
         
         btn_layout = QHBoxLayout()
-        btn_load = QPushButton("Load")
-        btn_load.clicked.connect(self.load_sim)
+        btn_load = QPushButton("Load Simulation...")
+        btn_load.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_DialogOpenButton))
+        btn_load.clicked.connect(self.open_load_dialog)
         
-        btn_del = QPushButton("Delete")
+        btn_del = QPushButton("Delete Loaded")
         btn_del.setStyleSheet("color: red;")
         btn_del.clicked.connect(self.delete_sim)
         
         btn_layout.addWidget(btn_load)
         btn_layout.addWidget(btn_del)
         
-        form.addRow(self.combo_load)
         form.addRow(btn_layout)
         
         form.addRow(btn_layout)
@@ -161,14 +168,53 @@ class Sidebar(QWidget):
         self.state.storage_path = new_path
         self.pm.base_path = new_path
         self.refresh_load_list()
-        
+
     def refresh_load_list(self):
-        self.combo_load.clear()
+        # Only refresh stow generator combo if it exists
+        if hasattr(self, 'cmb_stg_source'):
+            self.cmb_stg_source.clear()
+            try:
+                 sims = self.pm.list_simulations()
+                 self.cmb_stg_source.addItems(sims)
+            except: pass
+
+    def open_load_dialog(self):
+        sims = self.pm.list_simulations_details()
+        dlg = SimulationLoadDialog(sims, self)
+        if dlg.exec():
+            name = dlg.selected_sim
+            if name:
+                self.do_load_sim(name)
+                
+    def do_load_sim(self, name):
         try:
-             sims = self.pm.list_simulations()
-             self.combo_load.addItems(sims)
-        except:
-             pass
+            QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+            geo, cfg, res = self.pm.load_simulation(name)
+            
+            self.state.geometry = geo
+            self.state.config = cfg
+            
+            self.lbl_current_sim.setText(name)
+            
+            # Update all GUI elements
+            self.update_widgets_from_state()
+            self.geometry_changed.emit()
+            self.load_requested.emit(res)
+            self.reset_ready()
+            
+            if hasattr(self, 'btn_export_stow'):
+                self.btn_export_stow.setEnabled(True)
+                
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            QMessageBox.critical(self, "Load Error", str(e))
+        finally:
+            QApplication.restoreOverrideCursor()
+
+    def load_sim(self):
+        # Legacy stub or redirect if needed
+        pass
 
     def save_current(self):
         name = self.save_name.text()
@@ -186,8 +232,8 @@ class Sidebar(QWidget):
         self.save_requested.emit(name)
         
     def delete_sim(self):
-        name = self.combo_load.currentText()
-        if not name: return
+        name = self.lbl_current_sim.text()
+        if not name or name == "No Simulation Loaded": return
         
         ret = QMessageBox.warning(self, "Delete Simulation",
                                   f"Are you sure you want to PERMANENTLY delete '{name}'?\nThis cannot be undone.",
@@ -453,6 +499,7 @@ class Sidebar(QWidget):
         from lcp.analysis.stow_strategy import StowStrategyGenerator
         import shutil
         import json
+        from datetime import datetime
         
         sim_name = self.cmb_stg_source.currentText()
         if not sim_name:
@@ -492,8 +539,26 @@ class Sidebar(QWidget):
              os.makedirs(new_sim_dir)
              
              # Copy Config and Results (Summary)
+             # Copy Config and Results (Summary)
              if os.path.exists(cfg_path):
-                 shutil.copy2(cfg_path, os.path.join(new_sim_dir, "config.json"))
+                 # Load original config
+                 with open(cfg_path, 'r') as f:
+                     cfg_data = json.load(f)
+                 
+                 # Inject Stow Parameters
+                 cfg_data['stow_strategy'] = {
+                     'min_safe_interval_min': min_gap,
+                     'safe_stow_el': safe_el,
+                     'westward_offset_deg': offset,
+                     'max_motor_speed_deg_per_min': speed,
+                     'source_simulation': sim_name,
+                     'generated_at': str(datetime.now())
+                 }
+                 
+                 # Save to new location
+                 with open(os.path.join(new_sim_dir, "config.json"), 'w') as f:
+                     json.dump(cfg_data, f, indent=4)
+                     
              if os.path.exists(res_path):
                  shutil.copy2(res_path, os.path.join(new_sim_dir, "results.csv"))
                  
@@ -515,12 +580,8 @@ class Sidebar(QWidget):
              finally:
                  QApplication.restoreOverrideCursor()
              
-             # Refresh List
-             self.refresh_load_list()
-
              # Auto-Load
-             self.combo_load.setCurrentText(new_sim_name)
-             self.load_sim()
+             self.do_load_sim(new_sim_name)
              
              # Switch Mode in Results Widget
              # Hacky access to MainWindow via parent chain or generic window access
@@ -537,24 +598,20 @@ class Sidebar(QWidget):
              QMessageBox.critical(self, "Generation Failed", str(e))
 
     def refresh_load_list(self):
-        self.combo_load.clear()
+        # Only refresh generator source combo
         if hasattr(self, 'cmb_stg_source'):
-            self.cmb_stg_source.clear() # Also update generator source
-            
-        try:
-             sims = self.pm.list_simulations()
-             self.combo_load.addItems(sims)
-             if hasattr(self, 'cmb_stg_source'):
+            self.cmb_stg_source.clear()
+            try:
+                 sims = self.pm.list_simulations()
                  self.cmb_stg_source.addItems(sims)
-        except:
-             pass
+            except: pass
 
         
     def export_stow_strategy(self):
         from lcp.analysis.stow_strategy import StowStrategyGenerator
         
-        sim_name = self.combo_load.currentText()
-        if not sim_name:
+        sim_name = self.lbl_current_sim.text()
+        if not sim_name or sim_name == "No Simulation Loaded":
              QMessageBox.warning(self, "Export Error", "No simulation loaded to export.")
              return
              

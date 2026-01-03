@@ -24,6 +24,69 @@ class PersistenceManager:
         if not os.path.exists(self.base_path):
             os.makedirs(self.base_path)
 
+    def list_simulations_details(self) -> List[Dict[str, Any]]:
+        """
+        Returns a list of dicts containing metadata for all available simulations.
+        Used for the detailed Load Dialog.
+        """
+        if not os.path.exists(self.base_path):
+            return []
+        
+        sims_details = []
+        for name in os.listdir(self.base_path):
+            path = os.path.join(self.base_path, name)
+            cfg_path = os.path.join(path, "config.json")
+            
+            if os.path.isdir(path) and os.path.exists(cfg_path):
+                details = {"name": name}
+                try:
+                    with open(cfg_path, 'r') as f:
+                        data = json.load(f)
+                        
+                    # Extract valuable metadata
+                    cfg = data.get('config', {})
+                    geo = data.get('geometry', {})
+                    stow = data.get('stow_strategy', None)
+                    
+                    details['timestamp'] = data.get('timestamp', "")
+                    details['panels'] = cfg.get('total_panels', 0)
+                    details['duration'] = cfg.get('duration_days', 0)
+                    details['sun_source'] = cfg.get('sun_source', 'pvlib')
+                    
+                    # Extended Metadata
+                    details['tolerance'] = cfg.get('tolerance', 0.0)
+                    details['rotation'] = cfg.get('plant_rotation', 0.0)
+                    details['timestep'] = cfg.get('timestep_min', 0)
+                    
+                    if stow:
+                        details['type'] = "Stow Strategy"
+                        details['source_sim'] = stow.get('source_simulation', 'Unknown')
+                        details['stow_gap'] = stow.get('min_safe_interval_min', '')
+                        details['stow_el'] = stow.get('safe_stow_el', '')
+                        details['stow_offset'] = stow.get('westward_offset_deg', '')
+                        details['stow_speed'] = stow.get('max_motor_speed_deg_per_min', '')
+                    else:
+                        details['type'] = "Standard"
+                        details['source_sim'] = "-"
+                        details['stow_gap'] = "-"
+                        details['stow_el'] = "-"
+                        details['stow_offset'] = "-"
+                        details['stow_speed'] = "-"
+                        
+                except Exception as e:
+                    print(f"Error reading config for {name}: {e}")
+                    details['error'] = str(e)
+                    
+                sims_details.append(details)
+                
+        # Sort by timestamp desc (newest first)
+        try:
+            sims_details.sort(key=lambda x: x.get('timestamp', ''), reverse=True)
+        except:
+            pass
+            
+        return sims_details
+
     def list_simulations(self) -> List[str]:
         """Returns a list of available simulation names."""
         if not os.path.exists(self.base_path):
@@ -36,7 +99,7 @@ class PersistenceManager:
                 sims.append(name)
         return sorted(sims)
 
-    def save_simulation(self, name: str, geo: PanelGeometry, cfg: ScenarioConfig, results: List[Dict[str, Any]]) -> str:
+    def save_simulation(self, name: str, geo: PanelGeometry, cfg: ScenarioConfig, results: List[Dict[str, Any]], extra_data: Dict[str, Any] = None) -> str:
         """
         Saves the simulation to a directory.
         """
@@ -89,6 +152,9 @@ class PersistenceManager:
             "version": "1.1",
             "timestamp": datetime.now().isoformat()
         }
+        
+        if extra_data:
+            data.update(extra_data)
         
         with open(os.path.join(sim_dir, "config.json"), "w") as f:
             json.dump(data, f, indent=4)
