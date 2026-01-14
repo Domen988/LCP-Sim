@@ -14,7 +14,7 @@ from lcp.physics.engine import InfiniteKernel, PanelState
 from lcp.gui.landscape_widget import AnnualLandscapeWidget
 from lcp.gui.recorder import StowRecorder
 from lcp.gui.failure_analysis import FailureAnalysisWidget
-from lcp.app.theme import Theme
+from lcp.gui.theme import Theme
 
 class ResultsWidget(QWidget):
     # Signals
