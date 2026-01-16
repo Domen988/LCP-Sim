@@ -17,4 +17,4 @@ class ScenarioConfig:
     field_spacing_y: float = 2.4 # Pivot-to-Pivot between fields (Y)
     
     # Sun Source
-    sun_source: str = "pvlib" # 'pvlib' or 'csv'
+    sun_source: str = "csv" # 'pvlib' or 'csv'

@@ -10,6 +10,7 @@ from datetime import date
 from lcp.gui.state import AppState
 from lcp.core.persistence import PersistenceManager
 from lcp.gui.load_dialog import SimulationLoadDialog
+from lcp.gui.help_dialog import HelpDialog
 from PyQt6.QtWidgets import QStyle
 
 class CollapsibleBox(QWidget):
@@ -100,6 +101,11 @@ class Sidebar(QWidget):
         self.init_visual_settings()
         
         self.layout.addStretch()
+        
+        # Help Button
+        btn_help = QPushButton("Workflow Guide / Help")
+        btn_help.clicked.connect(self.open_help_dialog)
+        self.layout.addWidget(btn_help)
         
     def init_persistence(self):
         # Default Collapsed
@@ -396,7 +402,8 @@ class Sidebar(QWidget):
         
         self.de_start = QDateEdit()
         self.de_start.setCalendarPopup(True)
-        self.de_start.setDate(QDate(s.start_date.year, s.start_date.month, s.start_date.day))
+        # Default start date override: 1.1.2026
+        self.de_start.setDate(QDate(2026, 1, 1))
         self.de_start.dateChanged.connect(self.on_sim_change)
         form.addRow("Start Date", self.de_start)
         
@@ -413,17 +420,16 @@ class Sidebar(QWidget):
         
         self.sb_step = QSpinBox()
         self.sb_step.setRange(1, 60)
-        self.sb_step.setValue(s.timestep_min)
-        self.sb_step.valueChanged.connect(self.on_sim_change)
-        self.sb_step.setValue(s.timestep_min)
-        self.sb_step.setValue(s.timestep_min)
+        # Default timestep override: 1 min
+        self.sb_step.setValue(1)
         self.sb_step.valueChanged.connect(self.on_sim_change)
         form.addRow("Timestep (min)", self.sb_step)
         
         # Sun Source
         self.cmb_sun_source = QComboBox()
         self.cmb_sun_source.addItems(["pvlib", "csv"])
-        self.cmb_sun_source.setCurrentText(self.state.config.sun_source)
+        # Default to csv as requested (should be handled by config default too, but ensure UI matches)
+        self.cmb_sun_source.setCurrentText("csv")
         self.cmb_sun_source.currentTextChanged.connect(self.on_sim_change)
         form.addRow("Sun Data Source", self.cmb_sun_source)
         
@@ -756,6 +762,9 @@ class Sidebar(QWidget):
                  
              QMessageBox.information(self, "Success", f"Clash Contour generated:\n{out_path}")
              
+             # Refresh The Dropdown
+             self.refresh_contour_list()
+             
         except Exception as e:
              import traceback
              traceback.print_exc()
@@ -942,3 +951,8 @@ class Sidebar(QWidget):
         self.sb_days.setEnabled(not s.full_year and not is_clash)
         
         self.blockSignals(False)
+
+    def open_help_dialog(self):
+        readme_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "README.md")
+        dlg = HelpDialog(readme_path, self)
+        dlg.exec()
