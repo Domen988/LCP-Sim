@@ -149,8 +149,13 @@ class ResultsWidget(QWidget):
         self.lbl_period_eff.setText("0%")
         
     def set_stow_all(self, enabled: bool):
+        self.stow_all_enabled = enabled
         if self.recorder:
             self.recorder.set_stow_all_mode(enabled)
+            
+        # Refresh current frame
+        if self.current_frames:
+             self.update_instant_stats(self.replay_idx)
             
     def setup_ui(self):
         main_layout = QVBoxLayout(self)
@@ -564,6 +569,10 @@ class ResultsWidget(QWidget):
         if mode == "Stow Strategy":
             if pd.notna(f.get('stow_az')) and pd.notna(f.get('stow_el')):
                 act_ovr = (f['stow_az'], f['stow_el'])
+                
+            # If Stow All is Enabled, force Inactive to follow Active
+            if getattr(self, 'stow_all_enabled', False) and act_ovr:
+                in_ovr = act_ovr
         
         # 2. Check Recorder Profile (Lower priority? Or handled?)
         # Original code had logic:

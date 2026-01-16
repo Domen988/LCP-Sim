@@ -78,6 +78,7 @@ class Sidebar(QWidget):
     run_requested = pyqtSignal()
     load_requested = pyqtSignal(list) # Emits results data
     save_requested = pyqtSignal(str) # Emits name to save
+    stow_all_changed = pyqtSignal(bool) # Emits stow all state
     
     # Styles
     STYLE_READY = "background-color: #2e7d32; color: white; font-weight: bold; padding: 5px;"
@@ -835,6 +836,7 @@ class Sidebar(QWidget):
          self.chk_stow_all = QCheckBox("Stow All Panels")
          self.chk_stow_all.setToolTip("Force all panels (Active & Inactive) to follow the Active/Stow profile.")
          self.chk_stow_all.setChecked(False)
+         self.chk_stow_all.toggled.connect(self.stow_all_changed.emit)
          form.addRow(self.chk_stow_all)
          
          box.addLayout(form)
