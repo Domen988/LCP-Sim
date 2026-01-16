@@ -71,6 +71,7 @@ class MainWindow(QMainWindow):
         self.sidebar.cb_show_full.toggled.connect(self.viewport.set_show_full_plant)
         # self.sidebar.cb_stow.toggled.connect(self.results.set_enable_safety) # Toggle Removed
         self.sidebar.cb_show_tolerance.toggled.connect(self.viewport.set_show_tolerance)
+        self.sidebar.chk_stow_all.toggled.connect(self.results.set_stow_all)
         
         # 1. Sidebar -> Viewport (Live Param Update)
         self.sidebar.geometry_changed.connect(self.viewport.update_scene)

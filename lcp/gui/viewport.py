@@ -398,7 +398,8 @@ class PlantViewport(gl.GLViewWidget):
         cv_unit, cf_unit = self.cyl_verts, self.cyl_faces
         
         # Local Tracking Logic
-        local_sun_az = eff_sun_az - (-s.config.plant_rotation)
+        # Fix 2025-01: Remove double negative (Global - Rot)
+        local_sun_az = eff_sun_az - s.config.plant_rotation
         R_track = self._get_rotation_matrix(local_sun_az, 90.0 - eff_sun_el)
         
         is_kernel_mode = (states is not None and len(states) == 9)

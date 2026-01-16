@@ -148,6 +148,10 @@ class ResultsWidget(QWidget):
         self.lbl_period_act.setText("0 MWh")
         self.lbl_period_eff.setText("0%")
         
+    def set_stow_all(self, enabled: bool):
+        if self.recorder:
+            self.recorder.set_stow_all_mode(enabled)
+            
     def setup_ui(self):
         main_layout = QVBoxLayout(self)
         main_layout.setContentsMargins(0,0,0,0)
@@ -521,9 +525,9 @@ class ResultsWidget(QWidget):
         
         # Solve
         # Adjust Azimuth for Plant Rotation
-        local_az = f['sun_az'] - (-s.config.plant_rotation)
+        local_az = f['sun_az'] - s.config.plant_rotation
         
-        rot = -s.config.plant_rotation
+        rot = s.config.plant_rotation
         
         local_in = None
         if inactive_override:

@@ -450,6 +450,9 @@ class Sidebar(QWidget):
         # Stow Strategy Generator Section
         self.init_stow_gen()
         
+        # Safe Contour Mapping Section
+        self.init_contour_map()
+        
         # Run Button outside
         self.btn_run = QPushButton("▶ RUN SIMULATION")
         self.btn_run.setStyleSheet(self.STYLE_READY)
@@ -462,15 +465,21 @@ class Sidebar(QWidget):
 
         # Inputs
         self.cmb_stg_source = QComboBox()
-        # Initial populate (will be refreshed via signal later if needed)
         try:
             self.cmb_stg_source.addItems(self.pm.list_simulations())
         except: pass
         
-        # Refresh button for combo? Or rely on refresh_load_list
-        # Let's connect refresh_load_list to update this too
+        # Strategy Mode
+        self.cmb_stg_mode = QComboBox()
+        self.cmb_stg_mode.addItems(["Counter-Rotation", "Clash Contour"])
+        self.cmb_stg_mode.currentTextChanged.connect(self.update_stow_ui_visibility)
         
-        self.sb_stg_min_gap = QSpinBox()
+        # Clash Contour Map Selection
+        self.cmb_stg_contour = QComboBox()
+        self.refresh_contour_list() # Initial populate
+        
+        # Params
+        self.sb_stg_min_gap = QSpinBox() # For Counter-Rotation mostly
         self.sb_stg_min_gap.setRange(1, 60); self.sb_stg_min_gap.setValue(5)
         
         self.sb_stg_safe_el = QDoubleSpinBox()
@@ -480,13 +489,33 @@ class Sidebar(QWidget):
         self.sb_stg_offset.setRange(0, 180); self.sb_stg_offset.setValue(45.0)
         
         self.sb_stg_speed = QDoubleSpinBox()
-        self.sb_stg_speed.setRange(0.1, 120); self.sb_stg_speed.setValue(20.0)
+        self.sb_stg_speed.setRange(0.1, 120); self.sb_stg_speed.setValue(5.0) # Default changed to 5 as requested
         
+        self.sb_stg_buffer = QDoubleSpinBox()
+        self.sb_stg_buffer.setRange(0.0, 10.0); self.sb_stg_buffer.setValue(0.5); self.sb_stg_buffer.setSingleStep(0.1)
+        
+        # Add Rows
         form.addRow("Source Simulation:", self.cmb_stg_source)
-        form.addRow("Min Safe Interval (min):", self.sb_stg_min_gap)
-        form.addRow("Safe Stow El (°):", self.sb_stg_safe_el)
-        form.addRow("Westward Offset (°):", self.sb_stg_offset)
-        form.addRow("Max Motor Speed (°/min):", self.sb_stg_speed)
+        form.addRow("Strategy Mode:", self.cmb_stg_mode)
+        
+        # Dynamic Rows (Labels referenced for hiding?)
+        # For simplicity, we add all and toggle visibility of widgets + labels
+        self.lbl_contour = QLabel("Clash Contour Map:")
+        form.addRow(self.lbl_contour, self.cmb_stg_contour)
+        
+        self.lbl_min_gap = QLabel("Min Safe Interval (min):")
+        form.addRow(self.lbl_min_gap, self.sb_stg_min_gap)
+        
+        self.lbl_safe_el = QLabel("Safe Stow El (°):")
+        form.addRow(self.lbl_safe_el, self.sb_stg_safe_el)
+        
+        self.lbl_offset = QLabel("Westward Offset (°):")
+        form.addRow(self.lbl_offset, self.sb_stg_offset)
+        
+        form.addRow("Elevation Motor Speed (°/min):", self.sb_stg_speed)
+        
+        self.lbl_buffer = QLabel("Elevation Buffer (°):")
+        form.addRow(self.lbl_buffer, self.sb_stg_buffer)
         
         btn_gen = QPushButton("Generate Stow Strategy")
         btn_gen.clicked.connect(self.run_stow_gen)
@@ -494,6 +523,36 @@ class Sidebar(QWidget):
         
         box.addLayout(form)
         self.layout.addWidget(box)
+        
+        self.update_stow_ui_visibility()
+
+    def refresh_contour_list(self):
+        self.cmb_stg_contour.clear()
+        try:
+            base = self.pm.base_path
+            c_dir = os.path.join(base, "Safe Elevation Contours")
+            if os.path.exists(c_dir):
+                files = [f for f in os.listdir(c_dir) if f.endswith(".json")]
+                self.cmb_stg_contour.addItems(files)
+        except: pass
+
+    def update_stow_ui_visibility(self):
+        mode = self.cmb_stg_mode.currentText()
+        is_contour = (mode == "Clash Contour")
+        
+        # Counter-Rotation specific
+        self.lbl_min_gap.setVisible(not is_contour)
+        self.sb_stg_min_gap.setVisible(not is_contour)
+        self.lbl_safe_el.setVisible(not is_contour)
+        self.sb_stg_safe_el.setVisible(not is_contour)
+        self.lbl_offset.setVisible(not is_contour)
+        self.sb_stg_offset.setVisible(not is_contour)
+        
+        # Contour specific
+        self.lbl_contour.setVisible(is_contour)
+        self.cmb_stg_contour.setVisible(is_contour)
+        self.lbl_buffer.setVisible(is_contour)
+        self.sb_stg_buffer.setVisible(is_contour)
 
     def run_stow_gen(self):
         from lcp.analysis.stow_strategy import StowStrategyGenerator
@@ -506,11 +565,30 @@ class Sidebar(QWidget):
             QMessageBox.warning(self, "Input Error", "Please select a source simulation.")
             return
 
+        mode = self.cmb_stg_mode.currentText()
+        
+        # Common
+        speed = self.sb_stg_speed.value()
+        
+        # Old Params
         min_gap = self.sb_stg_min_gap.value()
         safe_el = self.sb_stg_safe_el.value()
         offset = self.sb_stg_offset.value()
-        speed = self.sb_stg_speed.value()
         
+        # New Params
+        contour_file = self.cmb_stg_contour.currentText()
+        el_buffer = self.sb_stg_buffer.value()
+        
+        contour_path = None
+        if mode == "Clash Contour":
+            if not contour_file:
+                QMessageBox.warning(self, "Input Error", "Please select a Clash Contour Map.")
+                return
+            contour_path = os.path.join(self.pm.base_path, "Safe Elevation Contours", contour_file)
+            if not os.path.exists(contour_path):
+                QMessageBox.warning(self, "File Error", "Selected Contour Map not found.")
+                return
+
         try:
              # Construct Paths
              base = self.pm.base_path
@@ -523,11 +601,9 @@ class Sidebar(QWidget):
                  QMessageBox.critical(self, "Error", f"timeseries.csv not found in {sim_name}")
                  return
              
-             # Create New Simulation Name
-             # e.g. SimName_Stow_v1
-             # Check for existing variants?
-             # Simple increment:
-             base_name = f"{sim_name}_Stow"
+             # Create New Simulation Name (Suffix based on Mode?)
+             suffix = "Stow" if mode == "Counter-Rotation" else "ClashStow"
+             base_name = f"{sim_name}_{suffix}"
              counter = 1
              while True:
                  new_sim_name = f"{base_name}_v{counter}"
@@ -539,21 +615,32 @@ class Sidebar(QWidget):
              os.makedirs(new_sim_dir)
              
              # Copy Config and Results (Summary)
-             # Copy Config and Results (Summary)
              if os.path.exists(cfg_path):
                  # Load original config
                  with open(cfg_path, 'r') as f:
                      cfg_data = json.load(f)
                  
                  # Inject Stow Parameters
-                 cfg_data['stow_strategy'] = {
-                     'min_safe_interval_min': min_gap,
-                     'safe_stow_el': safe_el,
-                     'westward_offset_deg': offset,
+                 stow_cfg = {
+                     'strategy_mode': mode,
                      'max_motor_speed_deg_per_min': speed,
                      'source_simulation': sim_name,
                      'generated_at': str(datetime.now())
                  }
+                 
+                 if mode == "Counter-Rotation":
+                     stow_cfg.update({
+                         'min_safe_interval_min': min_gap,
+                         'safe_stow_el': safe_el,
+                         'westward_offset_deg': offset,
+                     })
+                 else:
+                     stow_cfg.update({
+                         'contour_map': contour_file,
+                         'elevation_buffer_deg': el_buffer
+                     })
+                     
+                 cfg_data['stow_strategy'] = stow_cfg
                  
                  # Save to new location
                  with open(os.path.join(new_sim_dir, "config.json"), 'w') as f:
@@ -564,10 +651,13 @@ class Sidebar(QWidget):
                  
              # Instantiate Generator
              gen = StowStrategyGenerator(
+                 strategy_mode=mode,
                  min_safe_interval_min=min_gap,
                  safe_stow_el=safe_el,
                  westward_offset_deg=offset,
-                 max_motor_speed_deg_per_min=speed
+                 max_motor_speed_deg_per_min=speed,
+                 contour_map_path=contour_path,
+                 el_buffer=el_buffer
              )
              
              # Process Timeseries -> New Timeseries
@@ -584,7 +674,6 @@ class Sidebar(QWidget):
              self.do_load_sim(new_sim_name)
              
              # Switch Mode in Results Widget
-             # Hacky access to MainWindow via parent chain or generic window access
              if self.window() and hasattr(self.window(), 'results'):
                   res = self.window().results
                   if res and hasattr(res, 'cmb_mode'):
@@ -605,6 +694,72 @@ class Sidebar(QWidget):
                  sims = self.pm.list_simulations()
                  self.cmb_stg_source.addItems(sims)
             except: pass
+            
+        # Refresh Contour Map combo
+        if hasattr(self, 'cmb_cmap_source'):
+            self.cmb_cmap_source.clear()
+            try:
+                 sims = self.pm.list_simulations()
+                 self.cmb_cmap_source.addItems(sims)
+            except: pass
+
+    def init_contour_map(self):
+        self.box_contour = CollapsibleBox("Clash Contour Mapping")
+        layout = QVBoxLayout()
+        
+        # Select Simulation
+        layout.addWidget(QLabel("Source Simulation:"))
+        self.cmb_cmap_source = QComboBox()
+        try:
+            self.cmb_cmap_source.addItems(self.pm.list_simulations())
+        except: pass
+        layout.addWidget(self.cmb_cmap_source)
+        
+        # Run Button
+        self.btn_run_cmap = QPushButton("Run Mapping")
+        self.btn_run_cmap.clicked.connect(self.run_contour_map)
+        layout.addWidget(self.btn_run_cmap)
+        
+        self.box_contour.addLayout(layout)
+        self.layout.addWidget(self.box_contour)
+
+    def run_contour_map(self):
+        from lcp.analysis.contour_map import ContourMapper
+        
+        sim_name = self.cmb_cmap_source.currentText()
+        if not sim_name:
+            QMessageBox.warning(self, "Input Error", "Please select a source simulation.")
+            return
+
+        try:
+             # Construct Sim Path
+             base = self.pm.base_path
+             sim_dir = os.path.join(base, sim_name)
+             
+             # Instantiate Mapper
+             # Use a subfolder in base_path called "Safe Elevation Contours"?
+             # User requested "new folder called 'Safe Elevation Contours'" saving export.
+             # ContourMapper defaults to CWD/Safe Elevation Contours.
+             # Let's align it to reside inside the Storage Path for cleanliness? 
+             # Or stick to user request which implies a specific folder name. 
+             # I'll create it within the storage path to keep things self-contained.
+             
+             output_dir = os.path.join(base, "Safe Elevation Contours")
+             mapper = ContourMapper(output_dir=output_dir)
+             
+             QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+             try:
+                 out_path = mapper.generate_map(sim_dir, sim_name)
+             finally:
+                 QApplication.restoreOverrideCursor()
+                 
+             QMessageBox.information(self, "Success", f"Clash Contour generated:\n{out_path}")
+             
+        except Exception as e:
+             import traceback
+             traceback.print_exc()
+             QMessageBox.critical(self, "Clash Contour Generation Failed", str(e))
+
 
         
     def export_stow_strategy(self):
@@ -675,6 +830,12 @@ class Sidebar(QWidget):
          self.cb_show_tolerance = QCheckBox("Panels with Tolerance")
          self.cb_show_tolerance.setChecked(False)
          form.addRow(self.cb_show_tolerance)
+         
+         # New Feature: Stow All Panels
+         self.chk_stow_all = QCheckBox("Stow All Panels")
+         self.chk_stow_all.setToolTip("Force all panels (Active & Inactive) to follow the Active/Stow profile.")
+         self.chk_stow_all.setChecked(False)
+         form.addRow(self.chk_stow_all)
          
          box.addLayout(form)
          self.layout.addWidget(box)

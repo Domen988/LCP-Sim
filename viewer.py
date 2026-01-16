@@ -163,6 +163,29 @@ def apply_point_sizing(fig, base_size):
         else:
             trace.marker.size = safe_size
 
+def process_contour_gaps(lut, gap_threshold=2.0):
+    """
+    Inserts None (NaN) into LUT if Azimuth gap > threshold.
+    Breaks Plotly lines.
+    """
+    if not lut: return pd.DataFrame(columns=["Azimuth", "Elevation"])
+    
+    # Sort just in case
+    lut = sorted(lut, key=lambda x: x[0])
+    
+    processed = []
+    
+    for i, (az, el) in enumerate(lut):
+        if i > 0:
+            prev_az = lut[i-1][0]
+            # Check for gap (handle wrapping if needed, but here simple diff)
+            if abs(az - prev_az) > gap_threshold:
+                 processed.append([None, None]) # Break
+                 
+        processed.append([az, el])
+        
+    return pd.DataFrame(processed, columns=["Azimuth", "Elevation"])
+
 # -----------------------------------------------------------------------------
 # 3. Component: Dashboard Renderer
 # -----------------------------------------------------------------------------
@@ -257,6 +280,47 @@ def render_dashboard(container, path, sim_name, settings):
             fig_phase.add_shape(type="rect", x0=r['az_min'], y0=r['el_min'], x1=r['az_max'], y1=r['el_max'], line=dict(color="gray", width=1, dash="solid"), fillcolor="rgba(0,0,0,0)", layer="above")
             fig_phase.add_annotation(x=r['az_min'], y=r['el_max'], text=f"{r['name']}", showarrow=False, yshift=10)
         
+        # Overlay Clash Contour (If Exists)
+        contour_path = os.path.join(SIMULATIONS_DIR, "Safe Elevation Contours", f"{sim_name}_contour.json")
+        if os.path.exists(contour_path):
+            try:
+                with open(contour_path, 'r') as f:
+                    cdata = json.load(f)
+                
+                # Try new key first, fall back to old
+                lut = cdata.get("clash_contour", [])
+                line_color = "red"
+                line_name = "Clash Contour"
+                
+                if not lut:
+                     lut = cdata.get("safe_elevation_lut", [])
+                     if lut: # Old format
+                         line_color = "orange"
+                         line_name = "Safe Limit (Old)"
+                
+                if lut:
+                    # Convert to Plot Azimuth
+                    # [Az, El]
+                    # Az is 0-360. 
+                    # plot_az logic: x if x <= 180 else x - 360
+                    transformed = []
+                    for az, el in lut:
+                        p_az = az if az <= 180 else az - 360
+                        transformed.append([p_az, el])
+                    
+                    # Process Gaps for Plotting
+                    df_seg = process_contour_gaps(transformed, gap_threshold=5.0)
+                    
+                    fig_phase.add_trace(go.Scatter(
+                        x=df_seg['Azimuth'], y=df_seg['Elevation'], 
+                        mode='lines', 
+                        line=dict(color=line_color, width=2, dash='solid'),
+                        name=line_name,
+                        connectgaps=False
+                    ))
+            except Exception:
+                pass
+
         # Add stats to title here
         fig_phase.update_layout(
             xaxis_title="Azimuth (0=N)", 
@@ -370,6 +434,11 @@ else:
             col1, col2 = st.columns(2)
             if col1.button("Library"): reset_to_library()
             if col2.button("Compare"): enter_compare_picker()
+
+            if st.button("Clash Contour Map"): st.session_state.app_mode = "CONTOUR_VIEW"; st.rerun()
+        elif st.session_state.app_mode == "CONTOUR_VIEW":
+            st.title("Contour Viewer")
+            if st.button("← Back to Library"): reset_to_library()
         else:
             st.title("Compare View")
             if st.button("← Stop Comparing"): exit_compare_to_single()
@@ -406,3 +475,68 @@ else:
         c1, c2 = st.columns(2)
         render_dashboard(c1, st.session_state.sim1_path, st.session_state.sim1_name, settings)
         render_dashboard(c2, st.session_state.sim2_path, st.session_state.sim2_name, settings)
+
+    elif st.session_state.app_mode == "CONTOUR_VIEW":
+        st.title("Clash Contour Viewer")
+        
+        CONTOURS_DIR = os.path.join(SIMULATIONS_DIR, "Safe Elevation Contours")
+        
+        if not os.path.exists(CONTOURS_DIR):
+             st.warning(f"No contour maps found in {CONTOURS_DIR}")
+        else:
+             files = [f for f in os.listdir(CONTOURS_DIR) if f.endswith(".json")]
+             if not files:
+                 st.warning("No JSON contour maps found.")
+             else:
+                 selected_file = st.selectbox("Select Contour Map", files)
+                 if selected_file:
+                     path = os.path.join(CONTOURS_DIR, selected_file)
+                     try:
+                         with open(path, 'r') as f:
+                             data = json.load(f)
+                             
+                         header = data.get("header", {})
+                         
+                         # Support both old and new keys for backward compatibility/transition
+                         contour_data = data.get("clash_contour", [])
+                         if not contour_data:
+                              contour_data = data.get("safe_elevation_lut", [])
+                         
+                         # Metadata
+                         geo = header.get("geometry", {})
+                         conf = header.get("config", {})
+                         sim_source = header.get("source_simulation", "Unknown")
+                         gen_at = header.get("generated_at", "Unknown")
+
+                         st.markdown(f"""
+                         <div style='font-size: 14px; background: #fafafa; padding: 10px; border-radius: 5px; border: 1px solid #ddd; margin-bottom: 20px;'>
+                             <b>Source:</b> {sim_source} • <b>Generated:</b> {gen_at}<br>
+                             <b>Geometry:</b> {geo.get('width')}x{geo.get('length')}m • Rot {conf.get('plant_rotation')}° • Tol {conf.get('tolerance')}m
+                         </div>
+                         """, unsafe_allow_html=True)
+                         
+                         if contour_data:
+                             df_lut = process_contour_gaps(contour_data, gap_threshold=5.0)
+                             
+                             # Plot
+                             fig = px.line(df_lut, x="Azimuth", y="Elevation", title="Clash Elevation Contour (Actual Clash Boundary)", markers=True)
+                             # connectgaps=False is default in px.line for NaN? Usually yes.
+                             fig.update_traces(connectgaps=False, line_shape='linear', line_color='red')
+                             
+                             fig.update_layout(
+                                 xaxis_title="Sun Azimuth (Deg)",
+                                 yaxis_title="Min Clash Elevation (Deg)",
+                                 template="plotly_white",
+                                 yaxis=dict(range=[0, 90])
+                             )
+                             
+                             st.plotly_chart(fig, use_container_width=True)
+                             
+                             with st.expander("View Raw Contour Data"):
+                                 st.dataframe(df_lut, use_container_width=True)
+                             
+                         else:
+                             st.warning("Contour Data is empty.")
+                             
+                     except Exception as e:
+                         st.error(f"Error loading map: {e}")

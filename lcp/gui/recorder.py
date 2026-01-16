@@ -370,9 +370,19 @@ class StowRecorder(QWidget):
             self.table.setItem(r, 4, QTableWidgetItem(f"{row['sun_az']:.1f}"))
             self.table.setItem(r, 5, QTableWidgetItem(f"{row['sun_el']:.1f}"))
 
-            # 6/7: Active Az/El (Default: Sun)
-            self.table.setItem(r, 6, QTableWidgetItem(f"{row['sun_az']:.1f}"))
-            self.table.setItem(r, 7, QTableWidgetItem(f"{row['sun_el']:.1f}"))
+            # 6/7: Active Az/El (Default: Sun, but check for stow/active cols)
+            if 'active_az' in row and pd.notna(row['active_az']):
+                 act_az = row['active_az']
+                 act_el = row['active_el']
+            elif 'stow_az' in row and pd.notna(row['stow_az']):
+                 act_az = row['stow_az']
+                 act_el = row['stow_el']
+            else:
+                 act_az = row['sun_az']
+                 act_el = row['sun_el']
+                 
+            self.table.setItem(r, 6, QTableWidgetItem(f"{act_az:.1f}"))
+            self.table.setItem(r, 7, QTableWidgetItem(f"{act_el:.1f}"))
             
             # 8: Profile Safety
             self.table.setItem(r, 8, QTableWidgetItem("❓"))
@@ -519,6 +529,11 @@ class StowRecorder(QWidget):
         QApplication.clipboard().setText(text_data)
         # QMessageBox.information(self, "Copied", "Selection copied to clipboard.") # Optional feedback (annoying?)
             
+    def set_stow_all_mode(self, enabled: bool):
+        self.stow_all_mode = enabled
+        # Update current view
+        self.update_row_safety(self.current_idx, update_viz=True)
+
     def update_row_safety(self, idx, update_viz=True):
         if not self.kernel: return
         
@@ -533,16 +548,22 @@ class StowRecorder(QWidget):
             sun_el = row_data['sun_el']
             
             # Conversion to Local Plant Coordinates
-            rot = -self.state.config.plant_rotation
+            rot = self.state.config.plant_rotation
             local_sun_az = sun_az - rot
             local_in_az = in_az - rot
             local_act_az = act_az - rot
+            
+            # Stow All Logic: If enabled, Inactive panels copy Active panels
+            if getattr(self, 'stow_all_mode', False):
+                 inactive_args = (local_act_az, act_el)
+            else:
+                 inactive_args = (local_in_az, in_el)
             
             # Solve
             states, collision = self.kernel.solve_timestep(
                 local_sun_az, sun_el,
                 enable_safety=True,
-                inactive_override=(local_in_az, in_el),
+                inactive_override=inactive_args,
                 active_override=(local_act_az, act_el)
             )
             
